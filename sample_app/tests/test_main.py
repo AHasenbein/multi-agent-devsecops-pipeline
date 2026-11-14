@@ -1,0 +1,73 @@
+import pytest
+from fastapi.testclient import TestClient
+
+from app import __version__
+from app.main import app, store
+
+
+@pytest.fixture
+def client():
+    store.clear()
+    return TestClient(app)
+
+
+def test_health_returns_ok(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "version": __version__}
+
+
+def test_notes_start_empty(client):
+    assert client.get("/notes").json() == []
+
+
+def test_create_note_returns_it_with_an_id(client):
+    response = client.post("/notes", json={"title": "first", "body": "hello"})
+    assert response.status_code == 201
+    assert response.json() == {"id": 1, "title": "first", "body": "hello"}
+
+
+def test_created_notes_are_listed_in_order(client):
+    client.post("/notes", json={"title": "a"})
+    client.post("/notes", json={"title": "b"})
+    assert [note["title"] for note in client.get("/notes").json()] == ["a", "b"]
+    assert [note["id"] for note in client.get("/notes").json()] == [1, 2]
+
+
+def test_get_note_by_id(client):
+    client.post("/notes", json={"title": "a"})
+    response = client.get("/notes/1")
+    assert response.status_code == 200
+    assert response.json()["title"] == "a"
+    assert response.json()["body"] == ""
+
+
+def test_get_missing_note_is_404(client):
+    response = client.get("/notes/99")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "note not found"}
+
+
+def test_delete_note_removes_it(client):
+    client.post("/notes", json={"title": "a"})
+    assert client.delete("/notes/1").status_code == 204
+    assert client.get("/notes/1").status_code == 404
+    assert client.get("/notes").json() == []
+
+
+def test_delete_missing_note_is_404(client):
+    assert client.delete("/notes/1").status_code == 404
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"title": ""},
+        {"title": "x" * 101},
+        {"title": "ok", "body": "x" * 2001},
+    ],
+)
+def test_invalid_note_is_rejected(client, payload):
+    assert client.post("/notes", json=payload).status_code == 422
+    assert client.get("/notes").json() == []

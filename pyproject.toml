@@ -16,7 +16,6 @@ dependencies = [
     "pip-audit>=2.7",
     "pytest>=8.0",
     "pytest-cov>=5.0",
-    "docker>=7.0",
 ]
 
 [dependency-groups]
@@ -32,6 +31,7 @@ packages = ["devsecops"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = ["docker: needs a running Docker daemon (skipped when there is none)"]
 
 [tool.ruff]
 line-length = 100
@@ -39,3 +39,6 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["devsecops", "app"]

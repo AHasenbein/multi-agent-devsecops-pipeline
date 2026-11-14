@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="1" failures="0" skipped="0" tests="1" time="0.253" timestamp="2026-11-13T20:49:45.335783-05:00" hostname="host"><testcase classname="" name="tests.test_main" file="tests/test_main.py" time="0.000"><error message="collection failure">ImportError while importing test module 'tests/test_main.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_main.py:5: in &lt;module&gt;
+    from app.main import app, store
+app/main.py:78: in &lt;module&gt;
+    import nonexistent_module_xyz
+E   ModuleNotFoundError: No module named 'nonexistent_module_xyz'</error></testcase></testsuite></testsuites>

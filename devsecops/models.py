@@ -352,6 +352,7 @@ class DeploymentRecord(BaseModel):
     previous_image_tag: str | None = None
     previous_container: str | None = None
     status: DeployStatus
+    error: str | None = None
 
 
 class HealthCheck(BaseModel):
