@@ -366,3 +366,15 @@ def test_escalate_is_deployable_only_with_an_approve_for_the_same_run():
     assert not decision.is_deployable(_approval(Verdict.TIMEOUT))
     assert not decision.is_deployable(_approval(Verdict.APPROVE, run_id="other-run"))
     assert decision.is_deployable(_approval(Verdict.APPROVE))
+
+
+def test_fr12_injection_finding_is_reported_under_its_own_rule_only(policy):
+    """An injection finding escalates through prompt_injection whatever severity it carries.
+    It never denies by itself, and is not double-counted as a scanner finding."""
+    for severity in Severity:
+        finding = Finding(
+            tool="injection", rule_id="INJ001", severity=severity, file="a.py", line=1
+        )
+        decision = RuleEngine(policy).evaluate(clean_input(security=report(finding)))
+        assert decision.outcome is Outcome.ESCALATE
+        assert decision.matched_rules == ("prompt_injection",)
