@@ -11,6 +11,7 @@ from devsecops.tools.health_checker import HealthChecker
 from devsecops.tools.injection_detector import InjectionDetector
 from devsecops.tools.pip_audit_scanner import PipAuditScanner
 from devsecops.tools.pytest_runner import PytestRunner
+from devsecops.tools.sandbox import MonitorResult, Sandbox, watch_health
 
 __all__ = [
     "BanditScanner",
@@ -19,9 +20,12 @@ __all__ = [
     "DockerError",
     "HealthChecker",
     "InjectionDetector",
+    "MonitorResult",
     "PipAuditScanner",
     "PytestRunner",
+    "Sandbox",
     "ScanOutput",
     "ToolError",
     "run_command",
+    "watch_health",
 ]

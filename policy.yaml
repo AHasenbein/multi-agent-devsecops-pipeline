@@ -32,6 +32,7 @@ important_files:
 # GitHub logins allowed to approve or reject an escalated change (FR14).
 reviewers:
   - AHasenbein
+  - vdadd
 
 timers:
   review_timeout_s: 86400 # 24 h (tests use 120)
