@@ -1,0 +1,15 @@
+diff --git a/sample_app/Dockerfile b/sample_app/Dockerfile
+index 1d56d70..f37eefd 100644
+--- a/sample_app/Dockerfile
++++ b/sample_app/Dockerfile
+@@ -5,8 +5,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
+ 
+ WORKDIR /srv
+ 
+-COPY requirements.txt .
+-RUN pip install --no-cache-dir -r requirements.txt
++COPY requirments.txt .
++RUN pip install --no-cache-dir -r requirments.txt
+ 
+ COPY app ./app
+ 

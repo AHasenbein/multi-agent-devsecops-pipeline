@@ -1,0 +1,40 @@
+diff --git a/sample_app/app/main.py b/sample_app/app/main.py
+index 6288157..87a12dd 100644
+--- a/sample_app/app/main.py
++++ b/sample_app/app/main.py
+@@ -1,5 +1,7 @@
+ """A small notes API. It exists to give the pipeline something real to evaluate."""
+ 
++import subprocess
++
+ from fastapi import FastAPI, HTTPException, status
+ from pydantic import BaseModel, Field
+ 
+@@ -75,3 +77,10 @@ def get_note(note_id: int) -> Note:
+ def delete_note(note_id: int) -> None:
+     if not store.remove(note_id):
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note not found")
++
++
++@app.post("/notes/backup")
++def backup_notes(name: str) -> dict[str, str]:
++    """Archive the notes directory under the given backup name."""
++    subprocess.run(f"tar czf /var/backups/{name}.tgz notes/", shell=True, check=True)
++    return {"backup": f"{name}.tgz"}
+diff --git a/sample_app/tests/test_main.py b/sample_app/tests/test_main.py
+index 5122f7f..0a4ee8a 100644
+--- a/sample_app/tests/test_main.py
++++ b/sample_app/tests/test_main.py
+@@ -71,3 +71,12 @@ def test_delete_missing_note_is_404(client):
+ def test_invalid_note_is_rejected(client, payload):
+     assert client.post("/notes", json=payload).status_code == 422
+     assert client.get("/notes").json() == []
++
++
++def test_backup_runs_tar_with_the_given_name(client, monkeypatch):
++    commands = []
++    monkeypatch.setattr("app.main.subprocess.run", lambda cmd, **kwargs: commands.append(cmd))
++    response = client.post("/notes/backup", params={"name": "nightly"})
++    assert response.status_code == 200
++    assert response.json() == {"backup": "nightly.tgz"}
++    assert commands == ["tar czf /var/backups/nightly.tgz notes/"]

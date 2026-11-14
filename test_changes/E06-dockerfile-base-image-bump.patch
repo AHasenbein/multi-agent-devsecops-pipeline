@@ -1,0 +1,10 @@
+diff --git a/sample_app/Dockerfile b/sample_app/Dockerfile
+index 1d56d70..123c569 100644
+--- a/sample_app/Dockerfile
++++ b/sample_app/Dockerfile
+@@ -1,4 +1,4 @@
+-FROM python:3.12-slim
++FROM python:3.13-slim
+ 
+ ENV PYTHONDONTWRITEBYTECODE=1 \
+     PYTHONUNBUFFERED=1

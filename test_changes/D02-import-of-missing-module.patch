@@ -1,0 +1,46 @@
+diff --git a/sample_app/app/main.py b/sample_app/app/main.py
+index 6288157..f0f5f3c 100644
+--- a/sample_app/app/main.py
++++ b/sample_app/app/main.py
+@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException, status
+ from pydantic import BaseModel, Field
+ 
+ from app import __version__
++from app.storage import NoteStore
+ 
+ app = FastAPI(title="Sample App", version=__version__)
+ 
+@@ -17,33 +18,6 @@ class Note(NoteIn):
+     id: int
+ 
+ 
+-class NoteStore:
+-    """In-memory storage. The sandbox holds no real user data."""
+-
+-    def __init__(self) -> None:
+-        self._notes: dict[int, Note] = {}
+-        self._next_id = 1
+-
+-    def add(self, note: NoteIn) -> Note:
+-        saved = Note(id=self._next_id, **note.model_dump())
+-        self._notes[saved.id] = saved
+-        self._next_id += 1
+-        return saved
+-
+-    def all(self) -> list[Note]:
+-        return list(self._notes.values())
+-
+-    def get(self, note_id: int) -> Note | None:
+-        return self._notes.get(note_id)
+-
+-    def remove(self, note_id: int) -> bool:
+-        return self._notes.pop(note_id, None) is not None
+-
+-    def clear(self) -> None:
+-        self._notes.clear()
+-        self._next_id = 1
+-
+-
+ store = NoteStore()
+ 
+ 

@@ -117,9 +117,11 @@ multi-agent-devsecops-pipeline/
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── test_changes/                 # the 30 seeded changes as patch files + expected outcome manifest
-│   ├── manifest.yaml             # id, category, expected decision
+│   ├── manifest.yaml             # id, category, expected decision and matched rules
+│   ├── README.md                 # how to run the offline check and how to add a change
 │   └── *.patch
 ├── scripts/
+│   ├── check_seeded_changes.py   # offline: applies each patch to a temp copy, runs the tools + RuleEngine
 │   ├── run_seeded_changes.py     # applies each patch on a branch, pushes, collects decisions
 │   └── install_daemon.sh
 └── tests/

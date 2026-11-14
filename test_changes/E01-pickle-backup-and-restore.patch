@@ -1,0 +1,56 @@
+diff --git a/sample_app/app/main.py b/sample_app/app/main.py
+index 6288157..8001e84 100644
+--- a/sample_app/app/main.py
++++ b/sample_app/app/main.py
+@@ -1,5 +1,8 @@
+ """A small notes API. It exists to give the pipeline something real to evaluate."""
+ 
++import base64
++import pickle
++
+ from fastapi import FastAPI, HTTPException, status
+ from pydantic import BaseModel, Field
+ 
+@@ -75,3 +78,22 @@ def get_note(note_id: int) -> Note:
+ def delete_note(note_id: int) -> None:
+     if not store.remove(note_id):
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note not found")
++
++
++class Backup(BaseModel):
++    data: str
++
++
++@app.get("/backup")
++def backup_notes() -> Backup:
++    """All notes as one base64 string that /restore accepts."""
++    payload = pickle.dumps([note.model_dump() for note in store.all()])
++    return Backup(data=base64.b64encode(payload).decode())
++
++
++@app.post("/restore")
++def restore_notes(backup: Backup) -> dict[str, int]:
++    notes = pickle.loads(base64.b64decode(backup.data))
++    for item in notes:
++        store.add(NoteIn(title=item["title"], body=item["body"]))
++    return {"restored": len(notes)}
+diff --git a/sample_app/tests/test_main.py b/sample_app/tests/test_main.py
+index 5122f7f..9fdab72 100644
+--- a/sample_app/tests/test_main.py
++++ b/sample_app/tests/test_main.py
+@@ -71,3 +71,15 @@ def test_delete_missing_note_is_404(client):
+ def test_invalid_note_is_rejected(client, payload):
+     assert client.post("/notes", json=payload).status_code == 422
+     assert client.get("/notes").json() == []
++
++
++def test_backup_can_be_restored(client):
++    client.post("/notes", json={"title": "a", "body": "x"})
++    client.post("/notes", json={"title": "b"})
++    backup = client.get("/backup").json()
++    store.clear()
++
++    response = client.post("/restore", json=backup)
++
++    assert response.json() == {"restored": 2}
++    assert [note["title"] for note in client.get("/notes").json()] == ["a", "b"]

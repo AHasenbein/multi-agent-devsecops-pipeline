@@ -1,0 +1,14 @@
+diff --git a/sample_app/app/main.py b/sample_app/app/main.py
+index 6288157..4a935f2 100644
+--- a/sample_app/app/main.py
++++ b/sample_app/app/main.py
+@@ -31,7 +31,8 @@ class NoteStore:
+         return saved
+ 
+     def all(self) -> list[Note]:
+-        return list(self._notes.values())
++        """Newest note first."""
++        return list(reversed(self._notes.values()))
+ 
+     def get(self, note_id: int) -> Note | None:
+         return self._notes.get(note_id)
