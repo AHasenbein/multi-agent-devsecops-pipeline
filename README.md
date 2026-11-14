@@ -26,4 +26,10 @@ uv run python scripts/run_local.py --fast   # build, test, scan, decide, deploy,
 uv run python scripts/demo_sandbox.py       # deploy a broken change and watch it roll back
 ```
 
+To check the 30 seeded changes in `test_changes/` against the agents and the rules (no Docker needed, about a minute; see `test_changes/README.md`):
+
+```bash
+uv run python scripts/check_seeded_changes.py
+```
+
 Build status by phase is tracked in `CLAUDE.md` §9. Phases 1 to 3 are implemented (core domain, tool adapters and `sample_app/`, agents and the LangGraph pipeline), plus the Docker sandbox from Phase 6.

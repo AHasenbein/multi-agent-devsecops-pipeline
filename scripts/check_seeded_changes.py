@@ -3,16 +3,20 @@
 For every patch listed in test_changes/manifest.yaml this script:
 
 1. copies the working tree to a temporary directory and applies the patch there,
-2. runs PytestRunner, BanditScanner, PipAuditScanner and InjectionDetector on the result,
-3. gives those results to the RuleEngine, using the repo's own policy.yaml,
+2. runs the Test and Security agents on the result, with the real tools (pytest, Bandit,
+   pip-audit and the prompt-injection check),
+3. builds the policy input the way the graph does and gives it to the RuleEngine, using the
+   repo's own policy.yaml,
 4. compares the outcome and the matched rules with the manifest.
 
-It needs no Docker, no GitHub, no Claude and no LangGraph graph. Two things are therefore not
-checked here, and the manifest marks the affected changes with ``verify_e2e``:
+It needs no Docker, no GitHub and no Claude, and it does not run the LangGraph graph. Two
+things are therefore not checked here, and the manifest marks the affected changes with
+``verify_e2e``:
 
 * The Docker build is never run. Every change is evaluated as if its image built.
 * The list of changed files is worked out here, by comparing the tree before and after the
-  patch. The pipeline has no code yet that works out the changed files of a commit.
+  patch. In the pipeline, the caller of ``Orchestrator.start_run`` supplies that list, and
+  the Control API that will do so for a pushed commit does not exist yet.
 
 Usage:
     uv run python scripts/check_seeded_changes.py                # all 30 changes
@@ -35,24 +39,24 @@ from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from devsecops.agents import Agent, SecurityAgent, TestAgent, policy_input_from_state
 from devsecops.models import (
     BUILTIN_RULES,
     AgentResult,
     AgentStatus,
     BuildResult,
-    Finding,
     Outcome,
+    PipelineRun,
     PolicyInput,
     PolicySet,
-    SecurityReport,
     Severity,
-    TestReport,
 )
+from devsecops.orchestrator.state import initial_state
 from devsecops.policy import PolicyError, RuleEngine, load_policy, pip_audit_severity
 from devsecops.tools import (
     BanditScanner,
@@ -254,41 +258,40 @@ def tree_state(root: Path) -> TreeState:
 def changed_files(before: TreeState, after: TreeState) -> list[str]:
     """Every path that was added, deleted or modified. A rename gives both names.
 
-    This is the checker's stand-in for a pipeline step that does not exist yet. Cases that
-    depend on it are marked ``verify_e2e`` in the manifest.
+    This is the checker's own list. In the pipeline the caller of ``Orchestrator.start_run``
+    supplies it, so cases that depend on it are marked ``verify_e2e`` in the manifest.
     """
     return sorted(
         path for path in before.keys() | after.keys() if before.get(path) != after.get(path)
     )
 
 
-# --------------------------------------------------------------------------- running the tools
+# --------------------------------------------------------------------------- running the agents
 
 
 @dataclass(frozen=True)
-class Tools:
-    """The four checks, as plain callables so that tests can pass fakes."""
+class Agents:
+    """The two agents the offline check runs. Tests pass agents that are built on fake tools."""
 
-    run_tests: Callable[[Path], TestReport]
-    scan_code: Callable[[Path], ScanOutput]
-    scan_dependencies: Callable[[Path], ScanOutput]
-    scan_diff: Callable[[str], list[Finding]]
+    test: Agent
+    security: Agent
 
 
-class CachedPipAudit:
-    """pip-audit takes several seconds and its result depends only on requirements.txt,
+class CachedPipAudit(PipAuditScanner):
+    """pip-audit takes several seconds and its result depends only on the requirements file,
     so each distinct file content is scanned once per run."""
 
-    def __init__(self, scan: Callable[[Path], ScanOutput]) -> None:
-        self._scan = scan
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self._cache: dict[str, ScanOutput | str] = {}
 
-    def scan(self, workspace: Path) -> ScanOutput:
-        path = Path(workspace) / REQUIREMENTS
-        key = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "missing"
+    def scan(self, workspace: str | Path, requirements: str = REQUIREMENTS) -> ScanOutput:
+        path = Path(workspace) / requirements
+        digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "missing"
+        key = f"{requirements}:{digest}"
         if key not in self._cache:
             try:
-                self._cache[key] = self._scan(workspace)
+                self._cache[key] = super().scan(workspace, requirements)
             except ToolError as exc:
                 self._cache[key] = str(exc)
         cached = self._cache[key]
@@ -297,66 +300,45 @@ class CachedPipAudit:
         return cached
 
 
-def real_tools(policy: PolicySet) -> Tools:
-    pip_audit = PipAuditScanner(severity_for=partial(pip_audit_severity, policy))
-    return Tools(
-        run_tests=PytestRunner().run,
-        scan_code=BanditScanner().scan,
-        scan_dependencies=CachedPipAudit(pip_audit.scan).scan,
-        scan_diff=InjectionDetector().scan_diff,
+def real_agents(policy: PolicySet) -> Agents:
+    """The Test and Security agents on the real tools, wired as in scripts/run_local.py."""
+    pip_audit = CachedPipAudit(partial(pip_audit_severity, policy))
+    return Agents(
+        test=TestAgent(PytestRunner()),
+        security=SecurityAgent(BanditScanner(), pip_audit, InjectionDetector()),
     )
 
 
 def collect_results(
-    workspace: Path, run_id: str, diff: str, changed: Sequence[str], tools: Tools
+    workspace: Path, run_id: str, diff: str, changed: Sequence[str], agents: Agents
 ) -> PolicyInput:
-    """Run the tools on a workspace and gather what the RuleEngine reads.
+    """Run the Test and Security agents on a workspace and gather what the RuleEngine reads.
 
-    This stands in for the Build, Test and Security agents until they exist:
-    * build: not run. It is reported as a success.
-    * test: a ToolError means there is no report, and the test agent result is ERROR.
-    * security: a scanner that crashes becomes a tool error. The findings of the other
-      scanners are kept, so a HIGH finding still denies when another scanner failed.
+    The state, and what happens to an agent result, follow the graph nodes in
+    ``orchestrator/graph.py``. The Build agent is not run: the build counts as passed.
     """
-    agents = [
-        AgentResult(agent="build", status=AgentStatus.OK, summary="not run by the offline check")
-    ]
-    build = BuildResult(image_tag=f"seeded-{run_id.lower()}:offline", success=True)
-
-    test: TestReport | None
-    try:
-        test = tools.run_tests(workspace)
-        agents.append(AgentResult(agent="test", status=AgentStatus.OK))
-    except ToolError as exc:
-        test = None
-        agents.append(AgentResult(agent="test", status=AgentStatus.ERROR, errors=[str(exc)]))
-
-    findings: list[Finding] = []
-    tool_errors: list[str] = []
-    for scan in (tools.scan_code, tools.scan_dependencies):
-        try:
-            output = scan(workspace)
-        except ToolError as exc:
-            tool_errors.append(str(exc))
-        else:
-            findings += output.findings
-            tool_errors += output.tool_errors
-    injections = tools.scan_diff(diff)
-    security = SecurityReport(
-        findings=findings + injections,
-        tool_errors=tool_errors,
-        injection_suspected=bool(injections),
-    )
-    agents.append(AgentResult(agent="security", status=AgentStatus.OK))
-
-    return PolicyInput(
+    run = PipelineRun(
         run_id=run_id,
-        build=build,
-        test=test,
-        security=security,
-        agent_results=agents,
-        changed_files=list(changed),
+        commit_sha=run_id,
+        branch="seeded-change",
+        author="offline-check",
+        event="pull_request",
     )
+    state: dict[str, Any] = dict(initial_state(run, str(workspace), diff, list(changed)))
+    build = BuildResult(image_tag=f"seeded-{run_id.lower()}:offline", success=True)
+    built = AgentResult(
+        agent="build", status=AgentStatus.OK, summary="not run by the offline check"
+    )
+    state["build"] = build.model_dump(mode="json")
+    state["agent_results"] = [built.model_dump(mode="json")]
+
+    # Test and Security run side by side in the graph: neither sees the other's result.
+    results = {"test": agents.test.execute(state), "security": agents.security.execute(state)}
+    for key, result in results.items():
+        # As in the graph, an agent that ends in ERROR leaves no report in the state.
+        state[key] = None if result.status is AgentStatus.ERROR else result.data
+        state["agent_results"].append(result.model_dump(mode="json"))
+    return policy_input_from_state(state)
 
 
 # --------------------------------------------------------------------------- checking
@@ -428,23 +410,38 @@ def _describe_tests(results: PolicyInput) -> str:
 
 
 def _describe_findings(results: PolicyInput, engine: RuleEngine) -> str:
-    security = results.security or SecurityReport()
-    severities = [engine.effective_severity(finding) for finding in security.findings]
+    security = results.security
+    if security is None:
+        return "no report"
+    # Injection findings have their own rule, so they are counted apart from scanner findings.
+    severities = [
+        engine.effective_severity(finding)
+        for finding in security.findings
+        if finding.tool != "injection"
+    ]
     parts = [
         f"{severities.count(severity)} {severity.value}"
         for severity in (Severity.HIGH, Severity.MEDIUM, Severity.LOW)
         if severity in severities
     ]
+    injections = len(security.findings) - len(severities)
+    if injections:
+        parts.append(f"{injections} injection")
     if security.tool_errors:
         parts.append(f"{len(security.tool_errors)} tool error(s)")
     return ", ".join(parts) or "none"
 
 
 def evaluate(
-    workspace: Path, run_id: str, diff: str, changed: Sequence[str], tools: Tools, policy: PolicySet
+    workspace: Path,
+    run_id: str,
+    diff: str,
+    changed: Sequence[str],
+    agents: Agents,
+    policy: PolicySet,
 ) -> Evaluation:
     engine = RuleEngine(policy)
-    results = collect_results(workspace, run_id, diff, changed, tools)
+    results = collect_results(workspace, run_id, diff, changed, agents)
     decision = engine.evaluate(results)
     return Evaluation(
         outcome=decision.outcome,
@@ -461,7 +458,7 @@ def check_change(
     base: Path,
     base_state: TreeState,
     workspace: Path,
-    tools: Tools,
+    agents: Agents,
     policy: PolicySet,
 ) -> CaseResult:
     started = time.monotonic()
@@ -472,7 +469,7 @@ def check_change(
     apply_patch(workspace, patch)
     changed = changed_files(base_state, tree_state(workspace))  # before the tools add files
     evaluation = evaluate(
-        workspace, change.id, patch.read_text(encoding="utf-8"), changed, tools, policy
+        workspace, change.id, patch.read_text(encoding="utf-8"), changed, agents, policy
     )
     return CaseResult(
         change=change,
@@ -587,7 +584,7 @@ def run(
     manifest_path: Path = DEFAULT_MANIFEST,
     only: Sequence[str] = (),
     repo: Path = REPO_ROOT,
-    tools: Tools | None = None,
+    agents: Agents | None = None,
     progress: Callable[[str], None] = lambda text: None,
 ) -> list[CaseResult]:
     manifest = load_manifest(manifest_path)
@@ -602,7 +599,7 @@ def run(
         policy = load_policy(repo / "policy.yaml")
     except PolicyError as exc:
         raise SetupError(str(exc)) from exc
-    tools = tools or real_tools(policy)
+    agents = agents or real_agents(policy)
 
     with tempfile.TemporaryDirectory(prefix="seeded-changes-") as tmp:
         root = Path(tmp).resolve()
@@ -614,7 +611,7 @@ def run(
         # The tools run only in copies, so ``base`` stays exactly the snapshot.
         progress("baseline (no patch) ...")
         shutil.copytree(base, root / "baseline")
-        baseline = evaluate(root / "baseline", "baseline", "", [], tools, policy)
+        baseline = evaluate(root / "baseline", "baseline", "", [], agents, policy)
         if baseline.outcome is not Outcome.ALLOW:
             raise SetupError(
                 "the unpatched tree is not ALLOWed, so no result below could be trusted.\n"
@@ -627,7 +624,7 @@ def run(
             workspace = root / change.id
             results.append(
                 check_change(
-                    change, manifest_path.parent, base, base_state, workspace, tools, policy
+                    change, manifest_path.parent, base, base_state, workspace, agents, policy
                 )
             )
             shutil.rmtree(workspace, ignore_errors=True)

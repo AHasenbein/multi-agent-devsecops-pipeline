@@ -22,10 +22,12 @@ uv run python scripts/check_seeded_changes.py --json results.json
 ```
 
 For each change the script copies the working tree to a temporary directory, applies the
-patch, runs `PytestRunner`, `BanditScanner`, `PipAuditScanner` and `InjectionDetector`, gives
-the results to the `RuleEngine` with the repo's own `policy.yaml`, and compares the outcome
-and the matched rules with the manifest. It first evaluates the unpatched tree, which must be
-ALLOWed. It needs network access for pip-audit, but no Docker, GitHub, Claude or LangGraph.
+patch, and runs the Test and Security agents there with the real tools (pytest, Bandit,
+pip-audit and the prompt-injection check). It builds the policy input the way the graph
+does, gives it to the `RuleEngine` with the repo's own `policy.yaml`, and compares the
+outcome and the matched rules with the manifest. It first evaluates the unpatched tree, which
+must be ALLOWed. It needs network access for pip-audit, but no Docker, GitHub or Claude, and
+it does not run the graph itself.
 
 Exit code 0 means every change got its expected offline result, 1 means at least one did
 not, and 2 means the check could not run (for example, a patch no longer applies).
@@ -42,8 +44,9 @@ Check them again once the pipeline runs end to end.
   they only ESCALATE, because all the check can see is that an important file changed.
   E06 changes the base image, and only a real build shows that the image still builds.
 - **The changed-file list is the script's own.** It compares the tree before and after the
-  patch. The pipeline has no code yet that lists the changed files of a commit, so the
-  `important_file_changed` matches of E05, E06 and E09 still need that code.
+  patch. In the pipeline the caller of `Orchestrator.start_run` supplies that list, and the
+  Control API that will do so for a pushed commit does not exist yet. The
+  `important_file_changed` matches of E05, E06 and E09 depend on it.
 - **E09 depends on the trusted policy path.** It lowers the coverage gate in `policy.yaml`
   and deletes tests. The script always reads the repo's own `policy.yaml`. Only the real
   pipeline can show that it does the same.
