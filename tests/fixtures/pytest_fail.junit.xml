@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="1" failures="1" skipped="1" tests="14" time="0.263" timestamp="2026-11-13T20:49:44.659422-05:00" hostname="host"><testcase classname="tests.test_main" name="test_health_returns_ok" file="tests/test_main.py" line="13" time="0.008"><failure message="AssertionError: assert {'status': 'b...ion': '1.0.0'} == {'status': 'o...ion': '1.0.0'}&#10;  &#10;  Omitting 1 identical items, use -vv to show&#10;  Differing items:&#10;  {'status': 'broken'} != {'status': 'ok'}&#10;  Use -v to get more diff">client = &lt;starlette.testclient.TestClient object at 0x104bcbdd0&gt;
+
+    def test_health_returns_ok(client):
+        response = client.get("/health")
+        assert response.status_code == 200
+&gt;       assert response.json() == {"status": "ok", "version": __version__}
+E       AssertionError: assert {'status': 'b...ion': '1.0.0'} == {'status': 'o...ion': '1.0.0'}
+E         
+E         Omitting 1 identical items, use -vv to show
+E         Differing items:
+E         {'status': 'broken'} != {'status': 'ok'}
+E         Use -v to get more diff
+
+tests/test_main.py:17: AssertionError</failure></testcase><testcase classname="tests.test_main" name="test_notes_start_empty" file="tests/test_main.py" line="19" time="0.003" /><testcase classname="tests.test_main" name="test_create_note_returns_it_with_an_id" file="tests/test_main.py" line="23" time="0.003" /><testcase classname="tests.test_main" name="test_created_notes_are_listed_in_order" file="tests/test_main.py" line="29" time="0.009" /><testcase classname="tests.test_main" name="test_get_note_by_id" file="tests/test_main.py" line="36" time="0.005" /><testcase classname="tests.test_main" name="test_get_missing_note_is_404" file="tests/test_main.py" line="44" time="0.002" /><testcase classname="tests.test_main" name="test_delete_note_removes_it" file="tests/test_main.py" line="50" time="0.009" /><testcase classname="tests.test_main" name="test_delete_missing_note_is_404" file="tests/test_main.py" line="57" time="0.002" /><testcase classname="tests.test_main" name="test_invalid_note_is_rejected[payload0]" file="tests/test_main.py" line="61" time="0.004" /><testcase classname="tests.test_main" name="test_invalid_note_is_rejected[payload1]" file="tests/test_main.py" line="61" time="0.004" /><testcase classname="tests.test_main" name="test_invalid_note_is_rejected[payload2]" file="tests/test_main.py" line="61" time="0.004" /><testcase classname="tests.test_main" name="test_invalid_note_is_rejected[payload3]" file="tests/test_main.py" line="61" time="0.004" /><testcase classname="tests.test_main" name="test_skipped_example" file="tests/test_main.py" line="75" time="0.000"><skipped type="pytest.skip" message="flaky on CI">tests/test_main.py:76: flaky on CI</skipped></testcase><testcase classname="tests.test_main" name="test_fixture_blows_up" file="tests/test_main.py" line="80" time="0.000"><error message="failed on setup with &quot;file tests/test_main.py, line 81&#10;  def test_fixture_blows_up(missing_fixture):&#10;E       fixture 'missing_fixture' not found&#10;[+4 more lines; full report in element text]">file tests/test_main.py, line 81
+  def test_fixture_blows_up(missing_fixture):
+E       fixture 'missing_fixture' not found
+&gt;       available fixtures: anyio_backend, anyio_backend_name, anyio_backend_options, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, client, cov, doctest_namespace, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, monkeypatch, no_cover, platformdirs_isolated, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory
+&gt;       use 'pytest --fixtures [testpath]' for help on them.
+
+tests/test_main.py:81</error></testcase></testsuite></testsuites>
