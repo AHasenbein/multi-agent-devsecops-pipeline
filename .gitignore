@@ -22,3 +22,6 @@ docs/*.pdf
 .DS_Store
 .idea/
 .vscode/
+
+# scripts/run_local.py state
+.local-run/

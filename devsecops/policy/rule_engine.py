@@ -200,7 +200,13 @@ class RuleEngine:
     def _findings_with(self, results: PolicyInput, severity: Severity) -> list[Finding]:
         if results.security is None:
             return []
-        return [f for f in results.security.findings if self.effective_severity(f) is severity]
+        # Injection findings have their own rule (prompt_injection), so they are not also
+        # counted as a scanner finding.
+        return [
+            f
+            for f in results.security.findings
+            if f.tool != "injection" and self.effective_severity(f) is severity
+        ]
 
     def _decision(self, run_id: str, outcome: Outcome, matches: list[_Match]) -> ReleaseDecision:
         return ReleaseDecision(
