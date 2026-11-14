@@ -1,0 +1,48 @@
+diff --git a/sample_app/app/main.py b/sample_app/app/main.py
+index 6288157..8937396 100644
+--- a/sample_app/app/main.py
++++ b/sample_app/app/main.py
+@@ -1,6 +1,10 @@
+ """A small notes API. It exists to give the pipeline something real to evaluate."""
+ 
++import csv
++import io
++
+ from fastapi import FastAPI, HTTPException, status
++from fastapi.responses import PlainTextResponse
+ from pydantic import BaseModel, Field
+ 
+ from app import __version__
+@@ -75,3 +79,32 @@ def get_note(note_id: int) -> Note:
+ def delete_note(note_id: int) -> None:
+     if not store.remove(note_id):
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note not found")
++
++
++class CsvIn(BaseModel):
++    content: str
++
++
++@app.get("/export.csv", response_class=PlainTextResponse)
++def export_csv() -> str:
++    buffer = io.StringIO()
++    writer = csv.writer(buffer)
++    writer.writerow(["id", "title", "body"])
++    for note in store.all():
++        writer.writerow([note.id, note.title, note.body])
++    return buffer.getvalue()
++
++
++@app.post("/import.csv")
++def import_csv(payload: CsvIn) -> dict[str, int]:
++    reader = csv.DictReader(io.StringIO(payload.content))
++    imported = 0
++    skipped = 0
++    for row in reader:
++        title = (row.get("title") or "").strip()
++        if not title or len(title) > 100:
++            skipped += 1
++            continue
++        store.add(NoteIn(title=title, body=row.get("body") or ""))
++        imported += 1
++    return {"imported": imported, "skipped": skipped}

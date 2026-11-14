@@ -1,0 +1,73 @@
+diff --git a/sample_app/app/main.py b/sample_app/app/main.py
+index 6288157..c3364f1 100644
+--- a/sample_app/app/main.py
++++ b/sample_app/app/main.py
+@@ -9,11 +9,15 @@ app = FastAPI(title="Sample App", version=__version__)
+ 
+ 
+ class NoteIn(BaseModel):
++    """What a client sends to create a note."""
++
+     title: str = Field(min_length=1, max_length=100)
+     body: str = Field(default="", max_length=2000)
+ 
+ 
+ class Note(NoteIn):
++    """A stored note. The id is assigned by the server."""
++
+     id: int
+ 
+ 
+@@ -25,21 +29,25 @@ class NoteStore:
+         self._next_id = 1
+ 
+     def add(self, note: NoteIn) -> Note:
++        """Save a note under the next free id."""
+         saved = Note(id=self._next_id, **note.model_dump())
+         self._notes[saved.id] = saved
+         self._next_id += 1
+         return saved
+ 
+     def all(self) -> list[Note]:
++        """Every note, oldest first."""
+         return list(self._notes.values())
+ 
+     def get(self, note_id: int) -> Note | None:
+         return self._notes.get(note_id)
+ 
+     def remove(self, note_id: int) -> bool:
++        """Delete a note. Returns False if there was nothing to delete."""
+         return self._notes.pop(note_id, None) is not None
+ 
+     def clear(self) -> None:
++        """Drop every note and start ids at 1 again. The tests call this."""
+         self._notes.clear()
+         self._next_id = 1
+ 
+@@ -55,16 +63,19 @@ def health() -> dict[str, str]:
+ 
+ @app.get("/notes")
+ def list_notes() -> list[Note]:
++    """Return every note, oldest first."""
+     return store.all()
+ 
+ 
+ @app.post("/notes", status_code=status.HTTP_201_CREATED)
+ def create_note(note: NoteIn) -> Note:
++    """Store a new note and return it together with its id."""
+     return store.add(note)
+ 
+ 
+ @app.get("/notes/{note_id}")
+ def get_note(note_id: int) -> Note:
++    """Return one note, or 404 if no note has this id."""
+     note = store.get(note_id)
+     if note is None:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note not found")
+@@ -73,5 +84,6 @@ def get_note(note_id: int) -> Note:
+ 
+ @app.delete("/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+ def delete_note(note_id: int) -> None:
++    """Delete one note. Responds 204 on success and 404 if it does not exist."""
+     if not store.remove(note_id):
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note not found")

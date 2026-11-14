@@ -1,0 +1,13 @@
+diff --git a/sample_app/app/main.py b/sample_app/app/main.py
+index 6288157..19f7a4b 100644
+--- a/sample_app/app/main.py
++++ b/sample_app/app/main.py
+@@ -36,7 +36,7 @@ class NoteStore:
+     def get(self, note_id: int) -> Note | None:
+         return self._notes.get(note_id)
+ 
+-    def remove(self, note_id: int) -> bool:
++    def delete(self, note_id: int) -> bool:
+         return self._notes.pop(note_id, None) is not None
+ 
+     def clear(self) -> None:

@@ -1,0 +1,33 @@
+diff --git a/sample_app/app/main.py b/sample_app/app/main.py
+index 6288157..86176a5 100644
+--- a/sample_app/app/main.py
++++ b/sample_app/app/main.py
+@@ -75,3 +75,13 @@ def get_note(note_id: int) -> Note:
+ def delete_note(note_id: int) -> None:
+     if not store.remove(note_id):
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note not found")
++
++
++@app.get("/search")
++def search_notes(where: str) -> list[Note]:
++    """Notes for which the expression is true, for example where="'milk' in title"."""
++    return [
++        note
++        for note in store.all()
++        if eval(where, {"__builtins__": {}}, {"title": note.title, "body": note.body})
++    ]
+diff --git a/sample_app/tests/test_main.py b/sample_app/tests/test_main.py
+index 5122f7f..47eef35 100644
+--- a/sample_app/tests/test_main.py
++++ b/sample_app/tests/test_main.py
+@@ -71,3 +71,10 @@ def test_delete_missing_note_is_404(client):
+ def test_invalid_note_is_rejected(client, payload):
+     assert client.post("/notes", json=payload).status_code == 422
+     assert client.get("/notes").json() == []
++
++
++def test_search_filters_notes_with_an_expression(client):
++    client.post("/notes", json={"title": "buy milk"})
++    client.post("/notes", json={"title": "call mom"})
++    response = client.get("/search", params={"where": "'milk' in title"})
++    assert [note["title"] for note in response.json()] == ["buy milk"]

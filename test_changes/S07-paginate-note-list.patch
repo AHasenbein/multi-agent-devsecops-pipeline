@@ -1,0 +1,51 @@
+diff --git a/sample_app/app/main.py b/sample_app/app/main.py
+index 6288157..e03aa8a 100644
+--- a/sample_app/app/main.py
++++ b/sample_app/app/main.py
+@@ -1,6 +1,6 @@
+ """A small notes API. It exists to give the pipeline something real to evaluate."""
+ 
+-from fastapi import FastAPI, HTTPException, status
++from fastapi import FastAPI, HTTPException, Query, status
+ from pydantic import BaseModel, Field
+ 
+ from app import __version__
+@@ -54,8 +54,11 @@ def health() -> dict[str, str]:
+ 
+ 
+ @app.get("/notes")
+-def list_notes() -> list[Note]:
+-    return store.all()
++def list_notes(
++    limit: int = Query(default=50, ge=1, le=100),
++    offset: int = Query(default=0, ge=0),
++) -> list[Note]:
++    return store.all()[offset : offset + limit]
+ 
+ 
+ @app.post("/notes", status_code=status.HTTP_201_CREATED)
+diff --git a/sample_app/tests/test_main.py b/sample_app/tests/test_main.py
+index 5122f7f..dd255c1 100644
+--- a/sample_app/tests/test_main.py
++++ b/sample_app/tests/test_main.py
+@@ -71,3 +71,20 @@ def test_delete_missing_note_is_404(client):
+ def test_invalid_note_is_rejected(client, payload):
+     assert client.post("/notes", json=payload).status_code == 422
+     assert client.get("/notes").json() == []
++
++
++def test_notes_can_be_paged(client):
++    for title in ("a", "b", "c", "d"):
++        client.post("/notes", json={"title": title})
++    page = client.get("/notes", params={"limit": 2, "offset": 1}).json()
++    assert [note["title"] for note in page] == ["b", "c"]
++
++
++def test_offset_past_the_end_gives_an_empty_page(client):
++    client.post("/notes", json={"title": "a"})
++    assert client.get("/notes", params={"offset": 5}).json() == []
++
++
++@pytest.mark.parametrize("params", [{"limit": 0}, {"limit": 101}, {"offset": -1}])
++def test_invalid_paging_is_rejected(client, params):
++    assert client.get("/notes", params=params).status_code == 422

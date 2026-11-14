@@ -1,0 +1,8 @@
+diff --git a/sample_app/requirements.txt b/sample_app/requirements.txt
+index 44321c7..b004fd2 100644
+--- a/sample_app/requirements.txt
++++ b/sample_app/requirements.txt
+@@ -1,2 +1,2 @@
+ fastapi==0.162.7
+-uvicorn==0.54.0
++uvicorn==0.540.0

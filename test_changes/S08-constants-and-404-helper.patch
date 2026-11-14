@@ -1,0 +1,45 @@
+diff --git a/sample_app/app/main.py b/sample_app/app/main.py
+index 6288157..db28f65 100644
+--- a/sample_app/app/main.py
++++ b/sample_app/app/main.py
+@@ -7,10 +7,13 @@ from app import __version__
+ 
+ app = FastAPI(title="Sample App", version=__version__)
+ 
++TITLE_MAX_LENGTH = 100
++BODY_MAX_LENGTH = 2000
++
+ 
+ class NoteIn(BaseModel):
+-    title: str = Field(min_length=1, max_length=100)
+-    body: str = Field(default="", max_length=2000)
++    title: str = Field(min_length=1, max_length=TITLE_MAX_LENGTH)
++    body: str = Field(default="", max_length=BODY_MAX_LENGTH)
+ 
+ 
+ class Note(NoteIn):
+@@ -47,6 +50,10 @@ class NoteStore:
+ store = NoteStore()
+ 
+ 
++def not_found() -> HTTPException:
++    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note not found")
++
++
+ @app.get("/health")
+ def health() -> dict[str, str]:
+     """Polled by the Monitoring Agent every 10 seconds after a deploy (FR17)."""
+@@ -67,11 +74,11 @@ def create_note(note: NoteIn) -> Note:
+ def get_note(note_id: int) -> Note:
+     note = store.get(note_id)
+     if note is None:
+-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note not found")
++        raise not_found()
+     return note
+ 
+ 
+ @app.delete("/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+ def delete_note(note_id: int) -> None:
+     if not store.remove(note_id):
+-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note not found")
++        raise not_found()

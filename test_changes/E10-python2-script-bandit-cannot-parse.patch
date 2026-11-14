@@ -1,0 +1,27 @@
+diff --git a/sample_app/scripts/seed_notes.py b/sample_app/scripts/seed_notes.py
+new file mode 100644
+index 0000000..3317de8
+--- /dev/null
++++ b/sample_app/scripts/seed_notes.py
+@@ -0,0 +1,21 @@
++#!/usr/bin/env python
++"""Fill a running sample app with a few example notes.
++
++Usage: python seed_notes.py http://localhost:8080
++"""
++import json
++import sys
++import urllib2
++
++NOTES = ["buy milk", "call mom", "water the plants"]
++
++base_url = sys.argv[1].rstrip("/")
++for title in NOTES:
++    request = urllib2.Request(
++        base_url + "/notes",
++        json.dumps({"title": title}),
++        {"Content-Type": "application/json"},
++    )
++    urllib2.urlopen(request)
++
++print "seeded %d notes" % len(NOTES)

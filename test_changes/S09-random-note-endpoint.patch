@@ -1,0 +1,47 @@
+diff --git a/sample_app/app/main.py b/sample_app/app/main.py
+index 6288157..0415320 100644
+--- a/sample_app/app/main.py
++++ b/sample_app/app/main.py
+@@ -1,5 +1,7 @@
+ """A small notes API. It exists to give the pipeline something real to evaluate."""
+ 
++import random
++
+ from fastapi import FastAPI, HTTPException, status
+ from pydantic import BaseModel, Field
+ 
+@@ -63,6 +65,14 @@ def create_note(note: NoteIn) -> Note:
+     return store.add(note)
+ 
+ 
++@app.get("/notes/random")
++def random_note() -> Note:
++    notes = store.all()
++    if not notes:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note not found")
++    return random.choice(notes)
++
++
+ @app.get("/notes/{note_id}")
+ def get_note(note_id: int) -> Note:
+     note = store.get(note_id)
+diff --git a/sample_app/tests/test_main.py b/sample_app/tests/test_main.py
+index 5122f7f..6d09643 100644
+--- a/sample_app/tests/test_main.py
++++ b/sample_app/tests/test_main.py
+@@ -71,3 +71,15 @@ def test_delete_missing_note_is_404(client):
+ def test_invalid_note_is_rejected(client, payload):
+     assert client.post("/notes", json=payload).status_code == 422
+     assert client.get("/notes").json() == []
++
++
++def test_random_note_is_one_of_the_stored_notes(client):
++    client.post("/notes", json={"title": "a"})
++    client.post("/notes", json={"title": "b"})
++    response = client.get("/notes/random")
++    assert response.status_code == 200
++    assert response.json()["title"] in {"a", "b"}
++
++
++def test_random_note_is_404_when_there_are_no_notes(client):
++    assert client.get("/notes/random").status_code == 404

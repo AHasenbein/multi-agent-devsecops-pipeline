@@ -1,0 +1,47 @@
+diff --git a/sample_app/app/main.py b/sample_app/app/main.py
+index 6288157..2343f28 100644
+--- a/sample_app/app/main.py
++++ b/sample_app/app/main.py
+@@ -1,5 +1,7 @@
+ """A small notes API. It exists to give the pipeline something real to evaluate."""
+ 
++import hashlib
++
+ from fastapi import FastAPI, HTTPException, status
+ from pydantic import BaseModel, Field
+ 
+@@ -75,3 +77,15 @@ def get_note(note_id: int) -> Note:
+ def delete_note(note_id: int) -> None:
+     if not store.remove(note_id):
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note not found")
++
++
++def share_token(note_id: int) -> str:
++    """Token that lets anyone who has the link read one note."""
++    return hashlib.md5(f"note-{note_id}".encode()).hexdigest()
++
++
++@app.get("/notes/{note_id}/share")
++def share_note(note_id: int) -> dict[str, str]:
++    if store.get(note_id) is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note not found")
++    return {"token": share_token(note_id)}
+diff --git a/sample_app/tests/test_main.py b/sample_app/tests/test_main.py
+index 5122f7f..ae67c79 100644
+--- a/sample_app/tests/test_main.py
++++ b/sample_app/tests/test_main.py
+@@ -71,3 +71,14 @@ def test_delete_missing_note_is_404(client):
+ def test_invalid_note_is_rejected(client, payload):
+     assert client.post("/notes", json=payload).status_code == 422
+     assert client.get("/notes").json() == []
++
++
++def test_share_token_is_stable_for_a_note(client):
++    client.post("/notes", json={"title": "a"})
++    first = client.get("/notes/1/share").json()["token"]
++    assert first == client.get("/notes/1/share").json()["token"]
++    assert len(first) == 32
++
++
++def test_share_missing_note_is_404(client):
++    assert client.get("/notes/9/share").status_code == 404

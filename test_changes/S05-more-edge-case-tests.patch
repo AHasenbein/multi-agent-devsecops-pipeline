@@ -1,0 +1,26 @@
+diff --git a/sample_app/tests/test_main.py b/sample_app/tests/test_main.py
+index 5122f7f..12d4f31 100644
+--- a/sample_app/tests/test_main.py
++++ b/sample_app/tests/test_main.py
+@@ -71,3 +71,21 @@ def test_delete_missing_note_is_404(client):
+ def test_invalid_note_is_rejected(client, payload):
+     assert client.post("/notes", json=payload).status_code == 422
+     assert client.get("/notes").json() == []
++
++
++def test_ids_are_not_reused_after_a_delete(client):
++    client.post("/notes", json={"title": "a"})
++    client.delete("/notes/1")
++    response = client.post("/notes", json={"title": "b"})
++    assert response.json()["id"] == 2
++
++
++def test_note_id_must_be_an_integer(client):
++    assert client.get("/notes/abc").status_code == 422
++    assert client.delete("/notes/abc").status_code == 422
++
++
++def test_title_and_body_at_the_length_limit_are_accepted(client):
++    response = client.post("/notes", json={"title": "x" * 100, "body": "y" * 2000})
++    assert response.status_code == 201
++    assert len(response.json()["body"]) == 2000
