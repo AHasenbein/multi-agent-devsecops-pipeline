@@ -1,0 +1,84 @@
+# CI for the pipeline's own code: lint and tests on every pull request and on main.
+#
+# This is not the DevSecOps pipeline itself. That one (pipeline.yml, CLAUDE.md §2) runs on
+# the self-hosted runner and evaluates sample_app. This workflow runs on GitHub's own
+# machines, needs no secrets, and only checks that the code in this repo still works.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A new push to the same branch cancels the run for the older commit.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the oldest version pyproject.toml allows; 3.15 is what we develop on.
+        python-version: ["3.11", "3.15"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+      - run: uv sync --locked
+      - name: Pipeline tests (Docker tests run in their own job)
+        run: uv run pytest -m "not docker"
+      # Keep this after the pipeline tests: --cov leaves sample_app/.coverage behind, and
+      # test_pytest_runner.py fails if that file exists.
+      - name: Sample app tests
+        working-directory: sample_app
+        run: uv run --project .. python -m pytest --cov=app
+
+  docker:
+    name: Docker sandbox tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      # These tests skip themselves when Docker is down, which would look like a pass.
+      - name: Check that Docker is running
+        run: docker info
+      - run: uv run pytest -m docker
+
+  seeded-changes:
+    name: Seeded changes (30 patches)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run python scripts/check_seeded_changes.py
