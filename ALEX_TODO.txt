@@ -82,6 +82,36 @@ Pick one:
        but Phase 4's exit criterion ("a real push produces a decision posted on
        GitHub") cannot be met until the runner exists.
 
+    D. Two repos (your idea). This repo stays public as the reusable pipeline code.
+       The FastAPI app being evaluated lives in a separate private repo, and that
+       private repo holds pipeline.yml and is the only one the self-hosted runner is
+       registered to. Strangers can open pull requests here, but those only ever run
+       ci.yml on GitHub's machines, never on our host.
+
+       What it changes:
+         - pipeline.yml moves to the private repo. The Control API on the host runs
+           from a pinned install of this public code (a tag or commit, not "latest
+           main"), which is what CLAUDE.md section 11 item 3 already asks for.
+         - sample_app/ stays here as the example and as the fixture for our tests
+           and the 30 seeded patches, which are written against it. The private repo
+           holds the copy that is actually pushed to, evaluated and deployed.
+         - The Build/Test/Security agents must take the app checkout path and the
+           GitHub repo name from config, not assume this repo.
+         - important_files in policy.yaml is written for the private repo's layout
+           (its workflow, Dockerfile, requirements). devsecops/** drops out, since
+           pipeline code no longer arrives in the evaluated commit.
+         - scripts/run_seeded_changes.py pushes its branches to the private repo.
+         - README.md, CLAUDE.md sections 2 and 3, and the final report describe two
+           repos. The design PDFs assume one, so the report should say why we split.
+
+       Catches:
+         - Anyone with write access to the private repo can trigger runs on our
+           host, so keep it to the two of us (and the grader only if they need it).
+         - Whatever commit of this repo the host is pinned to runs on our machine,
+           so the ruleset from step 2 matters more here, and moving the pin should
+           be a deliberate step.
+         - It is extra work in the two weeks before 11/30, mostly in Phase 4.
+
 Once you have decided:
 
     - Tell your teammate which option you chose.
