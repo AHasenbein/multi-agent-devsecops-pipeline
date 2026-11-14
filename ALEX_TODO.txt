@@ -54,13 +54,41 @@ Settings -> Actions -> General:
 
 4. Decide about the self-hosted runner
 --------------------------------------
-README.md and CLAUDE.md section 2 say the repo stays private until the final demo,
-because a self-hosted runner on a public repo lets a stranger's pull request run code
-on our machine. The repo is public now. Before we install the runner for pipeline.yml
-(Phase 4), either make the repo private again, or keep the pipeline workflow from
-running on fork pull requests. Then update that line in the README to match.
+This one is a decision, and it is yours to make. It has to be settled before Phase 4,
+when we install the self-hosted runner for pipeline.yml.
 
-ci.yml is not affected by this. It uses only GitHub's machines.
+The problem: README.md and CLAUDE.md section 2 say the repo stays private until the
+final demo, because a self-hosted runner on a public repo lets a stranger's pull
+request run code on our machine. The repo is public now, so the plan and the repo
+disagree.
+
+Pick one:
+
+    A. Make the repo private again (Settings -> General -> Danger Zone -> Change
+       visibility). This matches the docs and needs no code changes. Catch: on a
+       private repo the ruleset from step 2 is only enforced on a paid plan. GitHub
+       Pro is free for students through the Student Developer Pack.
+
+    B. Stay public and lock the pipeline workflow down. pipeline.yml would run only
+       on pushes to main and on pull requests from branches in this repo, never from
+       forks, with a job condition like:
+           if: github.event_name == 'push' ||
+               github.event.pull_request.head.repo.full_name == github.repository
+       Keep the approval setting from step 3 on as a second barrier. The docs then
+       need updating, and so does the run_seeded_changes.py plan if it uses forks.
+
+    C. Stay public and do not register the self-hosted runner until the demo. Until
+       then we exercise the pipeline with scripts/run_local.py. Safest while public,
+       but Phase 4's exit criterion ("a real push produces a decision posted on
+       GitHub") cannot be met until the runner exists.
+
+Once you have decided:
+
+    - Tell your teammate which option you chose.
+    - Update the "stays private" line in README.md and the last bullet of CLAUDE.md
+      section 2 so they say what we are actually doing.
+
+ci.yml is not affected by any of this. It uses only GitHub's machines.
 
 
 5. Delete this file
