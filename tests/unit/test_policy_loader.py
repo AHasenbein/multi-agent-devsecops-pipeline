@@ -110,3 +110,31 @@ def test_policy_cannot_downgrade_a_deny_rule_to_escalate():
     )
     with pytest.raises(PolicyError, match="cannot be changed"):
         parse_policy(POLICY_YAML + rules)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "sample_app/pytest.ini",
+        "sample_app/conftest.py",
+        "sample_app/tests/conftest.py",
+        "sample_app/.coveragerc",
+        "sample_app/.bandit",
+        ".bandit",
+        "policy.yaml",
+        "devsecops/tools/bandit_scanner.py",
+        ".github/workflows/pipeline.yml",
+    ],
+)
+def test_fr12_repo_policy_treats_tool_config_as_important(path):
+    """A change to test, coverage or scanner config could weaken the checks, so it escalates."""
+    from devsecops.policy import is_important_file
+
+    assert is_important_file(load_policy(REPO_ROOT / "policy.yaml"), path)
+
+
+@pytest.mark.parametrize("path", ["sample_app/app/main.py", "sample_app/tests/test_main.py"])
+def test_repo_policy_leaves_ordinary_app_changes_alone(path):
+    from devsecops.policy import is_important_file
+
+    assert not is_important_file(load_policy(REPO_ROOT / "policy.yaml"), path)

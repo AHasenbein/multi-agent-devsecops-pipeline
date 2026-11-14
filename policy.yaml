@@ -20,6 +20,14 @@ important_files:
   - sample_app/Dockerfile
   - sample_app/requirements.txt
   - devsecops/**
+  # Tool configuration: a change here could hide tests, inflate coverage, or mute a scanner.
+  - sample_app/pytest.ini
+  - sample_app/**/conftest.py
+  - sample_app/.coveragerc
+  - sample_app/setup.cfg
+  - sample_app/tox.ini
+  - sample_app/pyproject.toml
+  - "**/.bandit"
 
 # GitHub logins allowed to approve or reject an escalated change (FR14).
 reviewers:
