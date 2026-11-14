@@ -34,6 +34,7 @@ class Orchestrator:
         self._deps = deps
         self._graph = build_graph(deps, checkpointer)
         self._resume_guard = threading.Lock()
+        self._resuming: set[str] = set()
 
     @staticmethod
     def _config(run_id: str) -> dict:
@@ -59,15 +60,24 @@ class Orchestrator:
 
         Checking that the reviewer is allowed to approve is the ApprovalService's job;
         this checks that the run is really waiting and that the commit matches."""
-        with self._resume_guard:  # two answers for one run: only the first one counts
-            snapshot = self._graph.get_state(self._config(approval.run_id))
+        run_id = approval.run_id
+        # Two answers for one run: only the first one counts. The guard covers the check
+        # only. It must not be held while the run deploys and monitors (5 minutes), or
+        # every other reviewer's answer would wait behind it.
+        with self._resume_guard:
+            if run_id in self._resuming:
+                raise ReviewNotPending(f"run {run_id} is already being resumed")
+            snapshot = self._graph.get_state(self._config(run_id))
             if REVIEW_NODE not in snapshot.next:
-                raise ReviewNotPending(f"run {approval.run_id} is not waiting for review")
+                raise ReviewNotPending(f"run {run_id} is not waiting for review")
             if snapshot.values["run"]["commit_sha"] != approval.commit_sha:
-                raise ReviewNotPending(
-                    f"run {approval.run_id} is for a different commit than the approval"
-                )
-            return self._invoke(approval.run_id, Command(resume=approval.model_dump(mode="json")))
+                raise ReviewNotPending(f"run {run_id} is for a different commit than the approval")
+            self._resuming.add(run_id)
+        try:
+            return self._invoke(run_id, Command(resume=approval.model_dump(mode="json")))
+        finally:
+            with self._resume_guard:
+                self._resuming.discard(run_id)
 
     def get_state(self, run_id: str) -> dict[str, Any] | None:
         values = self._graph.get_state(self._config(run_id)).values

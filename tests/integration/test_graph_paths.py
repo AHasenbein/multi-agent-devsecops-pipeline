@@ -629,3 +629,37 @@ def test_qa_sc_01_five_runs_at_once_each_get_their_own_correct_record(
         assert pipeline.payloads(run, "BUILD_RESULT")[0]["image_tag"] == f"sample_app:commit{n}"
     assert pipeline.evidence.verify_chain().ok
     assert len(pipeline.evidence.list_runs()) == 5
+
+
+def test_fr14_one_run_deploying_does_not_block_another_reviewers_answer(
+    tmp_path, world, docker, notifier
+):
+    """An approved run spends 5 minutes in deploy + monitor. A second escalated run must
+    still be answerable during that time, and a duplicate answer must be refused."""
+    in_monitoring = threading.Event()
+    let_monitoring_finish = threading.Event()
+
+    class SlowChecker(Checker):
+        def check(self, url):
+            in_monitoring.set()
+            assert let_monitoring_finish.wait(10)
+            return super().check(url)
+
+    pipeline = Pipeline(tmp_path, world, docker, SlowChecker(), notifier)
+    world.bandit = ScanOutput(findings=[MEDIUM])
+    first, _ = pipeline.start(sha="first11")
+    second, _ = pipeline.start(sha="second2")
+
+    approving = threading.Thread(target=pipeline.answer, args=(first, Verdict.APPROVE))
+    approving.start()
+    assert in_monitoring.wait(10)  # the first run is now deploying and holds the sandbox
+
+    try:
+        with pytest.raises(ReviewNotPending, match="already being resumed"):
+            pipeline.answer(first, Verdict.REJECT)  # duplicate answer for the same run
+        state = pipeline.answer(second, Verdict.REJECT)  # must not wait for the first run
+        assert state["status"] == "DENIED"
+    finally:
+        let_monitoring_finish.set()
+        approving.join(10)
+    assert pipeline.orchestrator.get_state(first.run_id)["status"] == "DEPLOYED"
