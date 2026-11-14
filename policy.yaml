@@ -1,0 +1,39 @@
+# Release policy for the Multi-Agent DevSecOps Pipeline.
+#
+# The pipeline loads its policy from a trusted path on the host, never from the commit being
+# evaluated (CLAUDE.md §11 item 3). This file is the reviewed source for that host copy.
+# Changing it is an important-file change, so the change itself ESCALATEs.
+
+version: 1
+
+thresholds:
+  min_coverage_pct: 80
+
+# pip-audit findings are HIGH by default (FR8). List an advisory here to downgrade it.
+# Each entry needs: id, severity (MEDIUM or LOW), and a reason.
+pip_audit_exceptions: []
+
+# A change to any of these paths ESCALATEs (FR12).
+important_files:
+  - policy.yaml
+  - .github/workflows/**
+  - sample_app/Dockerfile
+  - sample_app/requirements.txt
+  - devsecops/**
+
+# GitHub logins allowed to approve or reject an escalated change (FR14).
+reviewers:
+  - AHasenbein
+
+timers:
+  review_timeout_s: 86400 # 24 h (tests use 120)
+  review_notify_sla_s: 60
+  health_interval_s: 10
+  health_window_s: 300
+  health_fail_threshold: 3
+  rollback_sla_s: 120
+
+llm:
+  claude_retries: 3
+  claude_max_extra_delay_s: 30
+  schema_retries: 2
