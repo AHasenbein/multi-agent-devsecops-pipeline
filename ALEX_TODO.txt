@@ -1,0 +1,146 @@
+TODO for Alex: turn on required checks for main
+================================================
+
+This branch adds .github/workflows/ci.yml. On every pull request and every push to
+main, GitHub runs five checks on its own machines (no secrets, no self-hosted runner):
+
+    Lint (ruff)
+    Tests (Python 3.11)
+    Tests (Python 3.15)
+    Docker sandbox tests
+    Seeded changes (30 patches)
+
+The workflow only reports red or green. Until the steps below are done, a red pull
+request can still be merged. These steps need repo admin rights, so they are yours.
+
+
+1. Let the checks run once
+--------------------------
+Open the pull request for the ci-workflow branch and wait for the five checks to
+finish. GitHub only lets you pick a check as "required" after it has run at least once.
+If one is red, it needs fixing before the merge (the Docker job has never run on Linux
+before, so that is the likeliest one).
+
+
+2. Require the checks on main
+-----------------------------
+On GitHub: Settings -> Branches -> Add branch ruleset (or "Add classic branch
+protection rule").
+
+    - Name: protect-main. Enforcement status: Active.
+    - Target branches: Include default branch (main).
+    - Turn on "Require a pull request before merging". Set required approvals to 1,
+      which matches our rule that the other teammate reviews each change.
+    - Turn on "Require status checks to pass". Click "Add checks" and add all five
+      names from the list above, exactly as written.
+    - Optional: turn on "Require branches to be up to date before merging".
+    - Save.
+
+To confirm it worked: open any pull request with a failing check and see that the
+Merge button is blocked.
+
+
+3. Check the Actions settings (the repo is public)
+--------------------------------------------------
+Settings -> Actions -> General:
+
+    - Under "Approval for running fork pull request workflows from contributors",
+      choose "Require approval for all external contributors". Anyone can open a
+      pull request on a public repo, and this stops their code running until one of
+      us approves it.
+    - Under "Workflow permissions", choose "Read repository contents and packages
+      permissions".
+
+
+4. Decide about the self-hosted runner
+--------------------------------------
+This one is a decision, and it is yours to make. It has to be settled before Phase 4,
+when we install the self-hosted runner for pipeline.yml.
+
+The problem: README.md and CLAUDE.md section 2 say the repo stays private until the
+final demo, because a self-hosted runner on a public repo lets a stranger's pull
+request run code on our machine. The repo is public now, so the plan and the repo
+disagree.
+
+Pick one:
+
+    A. Make the repo private again (Settings -> General -> Danger Zone -> Change
+       visibility). This matches the docs and needs no code changes. Catch: on a
+       private repo the ruleset from step 2 is only enforced on a paid plan. GitHub
+       Pro is free for students through the Student Developer Pack.
+
+    B. Stay public and lock the pipeline workflow down. pipeline.yml would run only
+       on pushes to main and on pull requests from branches in this repo, never from
+       forks, with a job condition like:
+           if: github.event_name == 'push' ||
+               github.event.pull_request.head.repo.full_name == github.repository
+       Keep the approval setting from step 3 on as a second barrier. The docs then
+       need updating, and so does the run_seeded_changes.py plan if it uses forks.
+
+    C. Stay public and do not register the self-hosted runner until the demo. Until
+       then we exercise the pipeline with scripts/run_local.py. Safest while public,
+       but Phase 4's exit criterion ("a real push produces a decision posted on
+       GitHub") cannot be met until the runner exists.
+
+    D. Two repos (your idea). This repo stays public as the reusable pipeline code.
+       The FastAPI app being evaluated lives in a separate private repo, and that
+       private repo holds pipeline.yml and is the only one the self-hosted runner is
+       registered to. Strangers can open pull requests here, but those only ever run
+       ci.yml on GitHub's machines, never on our host.
+
+       What it changes:
+         - pipeline.yml moves to the private repo. The Control API on the host runs
+           from a pinned install of this public code (a tag or commit, not "latest
+           main"), which is what CLAUDE.md section 11 item 3 already asks for.
+         - sample_app/ stays here as the example and as the fixture for our tests
+           and the 30 seeded patches, which are written against it. The private repo
+           holds the copy that is actually pushed to, evaluated and deployed.
+         - The Build/Test/Security agents must take the app checkout path and the
+           GitHub repo name from config, not assume this repo.
+         - important_files in policy.yaml is written for the private repo's layout
+           (its workflow, Dockerfile, requirements). devsecops/** drops out, since
+           pipeline code no longer arrives in the evaluated commit.
+         - scripts/run_seeded_changes.py pushes its branches to the private repo.
+         - README.md, CLAUDE.md sections 2 and 3, and the final report describe two
+           repos. The design PDFs assume one, so the report should say why we split.
+
+       Catches:
+         - Anyone with write access to the private repo can trigger runs on our
+           host, so keep it to the two of us (and the grader only if they need it).
+         - Whatever commit of this repo the host is pinned to runs on our machine,
+           so the ruleset from step 2 matters more here, and moving the pin should
+           be a deliberate step.
+         - It is extra work in the two weeks before 11/30, mostly in Phase 4.
+
+Once you have decided:
+
+    - Tell your teammate which option you chose.
+    - Update the "stays private" line in README.md and the last bullet of CLAUDE.md
+      section 2 so they say what we are actually doing.
+
+ci.yml is not affected by any of this. It uses only GitHub's machines.
+
+
+5. Delete this file
+-------------------
+Once steps 1 to 4 are done, remove this file on a branch and merge it like any other
+change (main will reject a direct push by then):
+
+    git switch main && git pull
+    git switch -c remove-alex-todo
+    git rm ALEX_TODO.txt
+    git commit -m "Remove ALEX_TODO.txt now that required checks are on"
+    git push -u origin remove-alex-todo
+
+Then open the pull request and merge it once the checks are green.
+
+
+Things to know
+--------------
+- The "Seeded changes" job runs pip-audit, which looks up live vulnerability data. If a
+  new advisory comes out for a sample_app dependency, that job can go red on a pull
+  request that did not cause it. The fix is to bump the dependency or add an exception
+  in policy.yaml.
+- Running the sample app's tests with --cov leaves sample_app/.coverage behind, and
+  tests/unit/test_pytest_runner.py fails while that file exists. Delete the file if
+  you hit this locally. The workflow orders its steps so it does not happen there.

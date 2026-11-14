@@ -19,6 +19,8 @@ uv run ruff check .      # lint
 cd sample_app && uv run --project .. python -m pytest --cov=app   # run the sample app's tests
 ```
 
+Every pull request and every push to `main` runs these same checks on GitHub (`.github/workflows/ci.yml`): lint, the tests on Python 3.11 and 3.15, the Docker sandbox tests, and the seeded-change check. A pull request should be green before it is merged.
+
 To see the pipeline work on this checkout without GitHub (needs Docker running):
 
 ```bash
