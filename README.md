@@ -19,4 +19,11 @@ uv run ruff check .      # lint
 cd sample_app && uv run --project .. python -m pytest --cov=app   # run the sample app's tests
 ```
 
-Build status by phase is tracked in `CLAUDE.md` §9. Phases 1 (core domain) and 2 (tool adapters and `sample_app/`) are implemented.
+To see the pipeline work on this checkout without GitHub (needs Docker running):
+
+```bash
+uv run python scripts/run_local.py --fast   # build, test, scan, decide, deploy, monitor
+uv run python scripts/demo_sandbox.py       # deploy a broken change and watch it roll back
+```
+
+Build status by phase is tracked in `CLAUDE.md` §9. Phases 1 to 3 are implemented (core domain, tool adapters and `sample_app/`, agents and the LangGraph pipeline), plus the Docker sandbox from Phase 6.
