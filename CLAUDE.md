@@ -15,7 +15,7 @@ The design comes from three PDFs in `docs/` (kept local only, gitignored because
 
 If the docs conflict, the FINAL v1.3.7 wins on architecture and the Requirements doc wins on behavior. Section 11 lists the known conflicts.
 
-**One-sentence summary:** a push or PR to `main` triggers a self-hosted GitHub Actions runner. The runner calls a local FastAPI Control API, which runs a LangGraph pipeline of six agents: Build, Test, Security, Policy, Deployment, and Monitoring. Deterministic `policy.yaml` rules decide ALLOW, DENY, or ESCALATE. Claude only writes the human-readable reason. Allowed changes deploy to a Docker sandbox and roll back automatically on failed health checks. Every step is written to an append-only, hash-chained SQLite evidence store.
+**One-sentence summary:** a push or PR to `main` of the private app repo (§2) triggers a self-hosted GitHub Actions runner. The runner calls a local FastAPI Control API, which runs a LangGraph pipeline of six agents: Build, Test, Security, Policy, Deployment, and Monitoring. Deterministic `policy.yaml` rules decide ALLOW, DENY, or ESCALATE. Claude only writes the human-readable reason. Allowed changes deploy to a Docker sandbox and roll back automatically on failed health checks. Every step is written to an append-only, hash-chained SQLite evidence store.
 
 ---
 
@@ -39,13 +39,13 @@ If the docs conflict, the FINAL v1.3.7 wins on architecture and the Requirements
 ## 2. Runtime topology (easy to get wrong — read carefully)
 
 ```
-Developer ──push/PR──▶ GitHub (private repo, Actions)
+Developer ──push/PR──▶ GitHub (private app repo, Actions: pipeline.yml)
                               │ job dispatch
                               ▼
 ┌──────────────── Team host (Linux/macOS, Python 3.11+, Docker) ─────────────────┐
 │  Self-hosted Actions runner ──HTTP POST /runs──▶  Control API (FastAPI daemon)  │
-│                                                   │                             │
-│                                                   ▼                             │
+│                                                   │  (pinned install of this    │
+│                                                   ▼   public repo + policy.yaml)│
 │                                  LangGraph orchestrator (+ SQLite checkpointer) │
 │                                     │ agents ──▶ tools adapters ──▶ docker/pytest/bandit/pip-audit
 │                                     │ llm ──HTTPS──▶ Claude API                 │
@@ -62,7 +62,11 @@ Developer ──push/PR──▶ GitHub (private repo, Actions)
 - **There are two different FastAPI apps.** Keep them in separate directories with separate dependencies.
   - `devsecops/` — the pipeline's Control API (port e.g. 8000).
   - `sample_app/` — the app *being evaluated and deployed* (container port 8080, exposes `GET /health`).
-- Self-hosted runner + public repo is unsafe, so **the repo stays private until the final demo**.
+- **There are two repos** (decided 11/15; the design PDFs assume one, so the final report must say why we split). A self-hosted runner on a public repo would let a stranger's pull request run code on the team host.
+  - **This repo is public.** It holds the pipeline code, `policy.yaml`, the tests, the 30 seeded patches, and `sample_app/` as the example app and test fixture. Its only workflow is `ci.yml`, which runs on GitHub's machines. **Never add a workflow with `runs-on: self-hosted` to this repo.**
+  - **The app repo is private**, with write access for the two of us only (and the grader if needed). It holds the copy of the app that is pushed to, evaluated and deployed, plus `.github/workflows/pipeline.yml`. It is the only repo the self-hosted runner is registered to. It keeps this repo's layout: `sample_app/`, `.github/workflows/`, and a top-level `policy.yaml` that the pipeline never reads (E09 changes it to show that).
+  - **The host runs a pinned install of this repo** (a tag or commit, never "latest main") and reads `policy.yaml` from that install. Moving the pin is a deliberate step, because whatever commit is pinned runs on our machine.
+  - **Nothing in `devsecops/` may assume the app sits next to the pipeline.** The app repo's name, the app's directory inside a checkout, the image name and the policy path come from `devsecops/config.py` (`DEVSECOPS_APP_REPO`, `DEVSECOPS_APP_DIR`, `DEVSECOPS_APP_IMAGE`, `DEVSECOPS_POLICY_PATH`). The defaults fit this repo's `sample_app/`, so tests and local runs need no setup.
 
 ---
 
@@ -73,8 +77,8 @@ multi-agent-devsecops-pipeline/
 ├── CLAUDE.md                     # this file
 ├── pyproject.toml                # pipeline deps: fastapi, uvicorn, langgraph, langgraph-checkpoint-sqlite,
 │                                 #   pydantic, pyyaml, anthropic, httpx, bandit, pip-audit, pytest, pytest-cov, docker
-├── policy.yaml                   # trusted copy lives on host; see §6 and §11
-├── .github/workflows/pipeline.yml
+├── policy.yaml                   # trusted copy = the one in the host's pinned install; see §6 and §11
+├── .github/workflows/ci.yml      # lint + tests on GitHub's machines. pipeline.yml lives in the private app repo (§2)
 ├── devsecops/
 │   ├── api/                      # FR1, FR14, FR20 — RunsController, ApprovalController, policies, health
 │   │   ├── main.py               # FastAPI app factory
@@ -110,8 +114,8 @@ multi-agent-devsecops-pipeline/
 │   ├── notifications/            # FR3, FR5, FR14, FR18
 │   │   └── github_notifier.py    # commit status, PR comment, alerts
 │   ├── models.py                 # shared domain models (§4)
-│   └── config.py                 # env + timers (§9)
-├── sample_app/                   # the FastAPI app under test
+│   └── config.py                 # host settings from env: app repo, app dir, image name, policy path (§2)
+├── sample_app/                   # the example FastAPI app + test fixture; the private app repo holds the deployed copy
 │   ├── app/main.py               # includes GET /health
 │   ├── tests/
 │   ├── requirements.txt
@@ -122,7 +126,7 @@ multi-agent-devsecops-pipeline/
 │   └── *.patch
 ├── scripts/
 │   ├── check_seeded_changes.py   # offline: applies each patch to a temp copy, runs the tools + RuleEngine
-│   ├── run_seeded_changes.py     # applies each patch on a branch, pushes, collects decisions
+│   ├── run_seeded_changes.py     # applies each patch on a branch of the private app repo, pushes, collects decisions
 │   └── install_daemon.sh
 └── tests/
     ├── unit/                     # rule engine, evidence chain, each agent with fake tools
@@ -226,11 +230,10 @@ pip_audit_exceptions:            # IDs downgraded from HIGH; must include justif
   - id: GHSA-xxxx-xxxx-xxxx
     severity: MEDIUM
     reason: "not reachable in sample app"
-important_files:                 # changes here → ESCALATE
-  - policy.yaml
+important_files:                 # paths in the private app repo; changes here → ESCALATE
+  - policy.yaml                  # the app repo's copy is never read, but changing it is suspicious
   - .github/workflows/**
   - sample_app/Dockerfile
-  - devsecops/**
   - sample_app/requirements.txt
 reviewers:                       # GitHub logins allowed to approve
   - <github-login>
@@ -270,7 +273,7 @@ Protect the API with a shared bearer token stored as a GitHub secret + host env 
 
 | FR | Requirement (short) | Module | Test |
 |---|---|---|---|
-| FR1 | push/PR to main starts run | `.github/workflows/pipeline.yml`, `api/runs.py` | system: push triggers run |
+| FR1 | push/PR to main starts run | `.github/workflows/pipeline.yml` (in the private app repo), `api/runs.py` | system: push triggers run |
 | FR2 | run record with run id, commit, author, start | `orchestrator`, `evidence` | unit: RUN_STARTED fields |
 | FR3 | notify if Actions/orchestrator misconfigured | `setup_validator`, `notifications` | unit: missing docker/secret/policy → error status |
 | FR4 | build Docker image, save errors | `agents/build`, `tools/docker_client` | unit w/ fake docker |
@@ -333,13 +336,14 @@ Each phase must meet its exit criterion before the next phase starts. Phases 1�
 |---|---|---|
 | 1 | **Seeded test set.** The Requirements doc says 10 safe / 10 security / 10 build-or-test failures (all denied). FINAL says 10 safe / 10 high-risk / 10 medium-to-low risk. Under FR12, MEDIUM findings ESCALATE, not DENY. | Use FINAL's split. Pass criteria: high-risk → DENY (10/10), medium → ESCALATE and **never ALLOW**, safe → ALLOW ≥ 9/10. Define "risky change blocked" as "not ALLOWed". Record the expected outcome per change in `test_changes/manifest.yaml`. |
 | 2 | **Do PR runs deploy?** | PR runs evaluate and comment only. Pushes to `main` (or merge commits) deploy. |
-| 3 | **Trusted policy source.** Not in the docs, but a real gap: if policy.yaml and the pipeline code are read from the commit being evaluated, a change can weaken its own rules. | Load `policy.yaml` from a trusted host path (`/etc/devsecops/policy.yaml` or a pinned checkout), never from the evaluated commit. Run the pipeline from a pinned install. Keep policy.yaml, workflows, Dockerfile, requirements, and `devsecops/**` in `important_files` so changes to them ESCALATE. |
+| 3 | **Trusted policy source.** Not in the docs, but a real gap: if policy.yaml and the pipeline code are read from the commit being evaluated, a change can weaken its own rules. | Load `policy.yaml` from the host's pinned install of this repo (`DEVSECOPS_POLICY_PATH` can point elsewhere), never from the evaluated commit. Keep policy.yaml, workflows, Dockerfile, and requirements in `important_files` so changes to them ESCALATE. `devsecops/**` is not listed: with two repos (§2) the pipeline code cannot arrive in an evaluated commit, and changes to it are protected by this repo's pull-request review and CI. |
 | 4 | Retry counts: "2 retries" (agent schema) vs "3 retries" (Claude). | These are two separate mechanisms (§1 items 4–5). Both are configurable. |
 | 5 | Layer count: v2.0 has 5 layers, FINAL has 4. | Use FINAL's 4 layers (§3). |
 | 6 | `DockerClient` vs `DockerAdapter`; `RuleEngine` vs `PolicySet.evaluate()`. | `DockerClient`; `RuleEngine` evaluates, `PolicySet` holds data. |
 | 7 | How the reviewer is notified within 1 min. | A GitHub PR comment / commit status mentioning the reviewers, with a link to the approval endpoint. A small CLI (`scripts/approve.py`) wraps `POST /runs/approval`. |
 | 8 | Append-only on SQLite can't stop a host admin. | Application-level append-only + triggers + hash chain + restricted file permissions (as FINAL states). Document this limitation in the report. |
 | 9 | What gets sent to Claude. | Only the diff and findings, after `redact.py` strips anything that looks like a key/token/password. Never send env values or full files. |
+| 10 | Self-hosted runner vs. public repo. | **Decided 11/15: two repos** (§2). This repo is public; the app, `pipeline.yml` and the runner belong to a private app repo. |
 
 ---
 
@@ -358,6 +362,6 @@ All timers come from `policy.yaml` `timers` / `config.py` so tests can shorten t
 
 - Python 3.11+, type hints, Pydantic v2, `ruff` + `pytest`. Keep the agents thin and put logic in `policy/` and `tools/`.
 - Every new rule or agent behavior gets a unit test that names the FR it covers.
-- Never commit `.env`, API keys, or `evidence.db`. Use GitHub secrets for `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, and `CONTROL_API_TOKEN`.
+- Never commit `.env`, API keys, or `evidence.db`. Use GitHub secrets in the private app repo for `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, and `CONTROL_API_TOKEN`. This public repo holds no secrets.
 - Each change goes on a branch and is reviewed by the other teammate (process constraint from the Requirements doc).
 - Out of scope: production deploys, non-Python languages, container image scanning, Kubernetes, and real user data.

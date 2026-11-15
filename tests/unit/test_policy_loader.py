@@ -20,7 +20,7 @@ def test_repo_policy_yaml_is_valid():
     assert policy.timers.health_fail_threshold == 3
     assert policy.llm.claude_retries == 3
     assert policy.llm.schema_retries == 2
-    assert "devsecops/**" in policy.important_files
+    assert ".github/workflows/**" in policy.important_files
     assert policy.reviewers
 
 
@@ -122,7 +122,6 @@ def test_policy_cannot_downgrade_a_deny_rule_to_escalate():
         "sample_app/.bandit",
         ".bandit",
         "policy.yaml",
-        "devsecops/tools/bandit_scanner.py",
         ".github/workflows/pipeline.yml",
     ],
 )
@@ -133,7 +132,16 @@ def test_fr12_repo_policy_treats_tool_config_as_important(path):
     assert is_important_file(load_policy(REPO_ROOT / "policy.yaml"), path)
 
 
-@pytest.mark.parametrize("path", ["sample_app/app/main.py", "sample_app/tests/test_main.py"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "sample_app/app/main.py",
+        "sample_app/tests/test_main.py",
+        # The pipeline's code lives in this repo, not in the app repo that is evaluated, so
+        # the policy has no rule for it (CLAUDE.md §2).
+        "devsecops/tools/bandit_scanner.py",
+    ],
+)
 def test_repo_policy_leaves_ordinary_app_changes_alone(path):
     from devsecops.policy import is_important_file
 

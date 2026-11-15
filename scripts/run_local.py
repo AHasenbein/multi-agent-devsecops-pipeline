@@ -3,7 +3,11 @@
     uv run python scripts/run_local.py                 # evaluate + deploy (takes ~5 min: FR17)
     uv run python scripts/run_local.py --fast          # 1 s health checks for 10 s
     uv run python scripts/run_local.py --event pull_request   # evaluate only, no deploy
-    uv run python scripts/run_local.py --workspace /path/to/other/checkout --fast
+    uv run python scripts/run_local.py --workspace /path/to/app/checkout --fast
+
+The app's directory inside the workspace, its image name and the trusted policy path come
+from devsecops/config.py (DEVSECOPS_APP_DIR, DEVSECOPS_APP_IMAGE, DEVSECOPS_POLICY_PATH).
+The defaults fit this repo, where the app is sample_app/.
 
 Needs Docker running. Evidence and checkpoints go to .local-run/ (gitignored).
 An escalated run pauses; the script then asks for approve or reject on the terminal.
@@ -26,6 +30,7 @@ from devsecops.agents import (  # noqa: E402
     SecurityAgent,
     TestAgent,
 )
+from devsecops.config import load_settings  # noqa: E402
 from devsecops.evidence import EvidenceStore  # noqa: E402
 from devsecops.models import Approval, PipelineRun, Timers, Verdict  # noqa: E402
 from devsecops.notifications import NullNotifier  # noqa: E402
@@ -73,7 +78,8 @@ def main() -> None:
     args = parser.parse_args()
     workspace = args.workspace.resolve()
 
-    policy_path = REPO_ROOT / "policy.yaml"  # the trusted copy, not the workspace's
+    settings = load_settings()
+    policy_path = settings.policy_path  # the trusted copy, never the workspace's
     policy = load_policy(policy_path)
     timers = Timers(health_interval_s=1, health_window_s=10) if args.fast else policy.timers
     state_dir = REPO_ROOT / ".local-run"
@@ -87,12 +93,13 @@ def main() -> None:
         evidence=evidence,
         notifier=PrintNotifier(),
         deploy_lock=DeployLock(state_dir / "deploy.lock"),
-        build_agent=BuildAgent(docker),
-        test_agent=TestAgent(PytestRunner()),
+        build_agent=BuildAgent(docker, app_dir=settings.app_dir, image_name=settings.app_image),
+        test_agent=TestAgent(PytestRunner(), app_dir=settings.app_dir),
         security_agent=SecurityAgent(
             BanditScanner(),
             PipAuditScanner(functools.partial(pip_audit_severity, policy)),
             InjectionDetector(),
+            app_dir=settings.app_dir,
         ),
         policy_agent=PolicyAgent(RuleEngine(policy)),
         deployment_agent=DeploymentAgent(sandbox),

@@ -2,11 +2,22 @@
 
 CMPSC 320 Software Engineering term project (Fall 2026), team **Fast API DevSecOps**.
 
-A LangGraph orchestrator runs six agents (Build, Test, Security, Policy, Deployment, Monitoring) against a sample FastAPI app on every push or pull request to `main`. Rules in `policy.yaml` decide **ALLOW / DENY / ESCALATE**. Claude writes only the explanation. Allowed changes deploy to a Docker sandbox and roll back automatically on failed health checks. Every run is saved to an append-only SQLite evidence store.
+A LangGraph orchestrator runs six agents (Build, Test, Security, Policy, Deployment, Monitoring) against a FastAPI app on every push or pull request to that app's `main`. Rules in `policy.yaml` decide **ALLOW / DENY / ESCALATE**. Claude writes only the explanation. Allowed changes deploy to a Docker sandbox and roll back automatically on failed health checks. Every run is saved to an append-only SQLite evidence store.
 
 See [`CLAUDE.md`](CLAUDE.md) for the full build plan, architecture, and requirement traceability.
 
-> This repo stays **private** until the final demo, because it uses a self-hosted GitHub Actions runner.
+## Two repos
+
+The project is split across two repos so that a self-hosted GitHub Actions runner never runs a stranger's code:
+
+| Repo | Visibility | Holds |
+|---|---|---|
+| this one | public | the pipeline's code, `policy.yaml`, the tests, and `sample_app/` as the example app and test fixture |
+| the app repo | **private**, write access for the team only | the copy of the app that is pushed to, evaluated and deployed, plus `.github/workflows/pipeline.yml` |
+
+The self-hosted runner is registered to the private app repo only. Pull requests to this repo run `ci.yml` on GitHub's own machines and never reach the team host. The host runs the Control API from a pinned commit of this repo and reads `policy.yaml` from that install, never from the commit being evaluated.
+
+The app repo's name and layout reach the pipeline through environment variables (`devsecops/config.py`): `DEVSECOPS_APP_REPO`, `DEVSECOPS_APP_DIR`, `DEVSECOPS_APP_IMAGE` and `DEVSECOPS_POLICY_PATH`. The defaults fit this repo's `sample_app/`, so the commands below need none of them.
 
 ## Development
 
