@@ -1,8 +1,12 @@
 # Release policy for the Multi-Agent DevSecOps Pipeline.
 #
 # The pipeline loads its policy from a trusted path on the host, never from the commit being
-# evaluated (CLAUDE.md §11 item 3). This file is the reviewed source for that host copy.
-# Changing it is an important-file change, so the change itself ESCALATEs.
+# evaluated (CLAUDE.md §11 item 3). This file is the reviewed source for that host copy: the
+# host runs a pinned install of this repo and reads the policy.yaml that comes with it.
+#
+# The app being evaluated lives in a separate private repo (CLAUDE.md §2). The paths below
+# are paths in that repo, which keeps the same layout as this one: the app under
+# sample_app/, its workflow under .github/workflows/, and a policy.yaml at the top.
 
 version: 1
 
@@ -15,11 +19,14 @@ pip_audit_exceptions: []
 
 # A change to any of these paths ESCALATEs (FR12).
 important_files:
+  # The app repo's policy.yaml is never read, but a change to it is an attempt to change
+  # the rules, so a reviewer should see it.
   - policy.yaml
   - .github/workflows/**
   - sample_app/Dockerfile
   - sample_app/requirements.txt
-  - devsecops/**
+  # No devsecops/** here: the pipeline's code is not in the app repo, so it cannot arrive
+  # in an evaluated commit. Changes to it are reviewed in this repo (pull request + CI).
   # Tool configuration: a change here could hide tests, inflate coverage, or mute a scanner.
   - sample_app/pytest.ini
   - sample_app/**/conftest.py

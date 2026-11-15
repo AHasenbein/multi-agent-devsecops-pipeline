@@ -52,71 +52,48 @@ Settings -> Actions -> General:
       permissions".
 
 
-4. Decide about the self-hosted runner
---------------------------------------
-This one is a decision, and it is yours to make. It has to be settled before Phase 4,
-when we install the self-hosted runner for pipeline.yml.
+4. Set up the two repos (decided 11/15: option D)
+-------------------------------------------------
+We chose two repos. This repo is the public pipeline code. The app that is actually
+pushed to, evaluated and deployed lives in a separate private repo, which holds
+pipeline.yml and is the only repo the self-hosted runner is registered to. Strangers
+can open pull requests here, but those only ever run ci.yml on GitHub's machines.
 
-The problem: README.md and CLAUDE.md section 2 say the repo stays private until the
-final demo, because a self-hosted runner on a public repo lets a stranger's pull
-request run code on our machine. The repo is public now, so the plan and the repo
-disagree.
+Already done in the code (branch two-repo-split):
 
-Pick one:
+    - devsecops/config.py reads the app repo's name, the app's directory, the image
+      name and the policy path from DEVSECOPS_* environment variables.
+    - policy.yaml no longer lists devsecops/**, and says its paths are the app repo's.
+    - README.md and CLAUDE.md (sections 2, 3, 6, 11) describe two repos.
 
-    A. Make the repo private again (Settings -> General -> Danger Zone -> Change
-       visibility). This matches the docs and needs no code changes. Catch: on a
-       private repo the ruleset from step 2 is only enforced on a paid plan. GitHub
-       Pro is free for students through the Student Developer Pack.
+Still yours, because it needs your GitHub account:
 
-    B. Stay public and lock the pipeline workflow down. pipeline.yml would run only
-       on pushes to main and on pull requests from branches in this repo, never from
-       forks, with a job condition like:
-           if: github.event_name == 'push' ||
-               github.event.pull_request.head.repo.full_name == github.repository
-       Keep the approval setting from step 3 on as a second barrier. The docs then
-       need updating, and so does the run_seeded_changes.py plan if it uses forks.
+    a. Tell your teammate we chose option D.
 
-    C. Stay public and do not register the self-hosted runner until the demo. Until
-       then we exercise the pipeline with scripts/run_local.py. Safest while public,
-       but Phase 4's exit criterion ("a real push produces a decision posted on
-       GitHub") cannot be met until the runner exists.
+    b. Done 11/15: the private app repo is AHasenbein/devsecops-sample-app. Add your
+       teammate as a collaborator (Settings -> Collaborators) and nobody else.
+       Anyone who can push there can trigger runs on our host.
 
-    D. Two repos (your idea). This repo stays public as the reusable pipeline code.
-       The FastAPI app being evaluated lives in a separate private repo, and that
-       private repo holds pipeline.yml and is the only one the self-hosted runner is
-       registered to. Strangers can open pull requests here, but those only ever run
-       ci.yml on GitHub's machines, never on our host.
+    c. Done 11/15: it has the same layout as this repo (sample_app/ and policy.yaml
+       on main), and all 30 seeded patches apply to it. The pipeline never reads the
+       app repo's policy.yaml. It is there so that patch E09 can change it and show
+       that nothing happens.
 
-       What it changes:
-         - pipeline.yml moves to the private repo. The Control API on the host runs
-           from a pinned install of this public code (a tag or commit, not "latest
-           main"), which is what CLAUDE.md section 11 item 3 already asks for.
-         - sample_app/ stays here as the example and as the fixture for our tests
-           and the 30 seeded patches, which are written against it. The private repo
-           holds the copy that is actually pushed to, evaluated and deployed.
-         - The Build/Test/Security agents must take the app checkout path and the
-           GitHub repo name from config, not assume this repo.
-         - important_files in policy.yaml is written for the private repo's layout
-           (its workflow, Dockerfile, requirements). devsecops/** drops out, since
-           pipeline code no longer arrives in the evaluated commit.
-         - scripts/run_seeded_changes.py pushes its branches to the private repo.
-         - README.md, CLAUDE.md sections 2 and 3, and the final report describe two
-           repos. The design PDFs assume one, so the report should say why we split.
+    d. Make this repo public (Settings -> General -> Danger Zone -> Change
+       visibility). It was still PRIVATE on 11/15. Do step 3 first, so a stranger's
+       pull request cannot run workflows unapproved. The commit history was scanned
+       on 11/15: no key, token, .env, database or PDF was ever committed. Both of
+       your commit email addresses become publicly visible.
 
-       Catches:
-         - Anyone with write access to the private repo can trigger runs on our
-           host, so keep it to the two of us (and the grader only if they need it).
-         - Whatever commit of this repo the host is pinned to runs on our machine,
-           so the ruleset from step 2 matters more here, and moving the pin should
-           be a deliberate step.
-         - It is extra work in the two weeks before 11/30, mostly in Phase 4.
+    e. In Phase 4: register the self-hosted runner to the private app repo, never to
+       this one. Add ANTHROPIC_API_KEY, GITHUB_TOKEN and CONTROL_API_TOKEN as secrets
+       there. On the host, check this repo out at a fixed tag or commit, run the
+       Control API from that checkout, and set DEVSECOPS_APP_REPO to
+       AHasenbein/devsecops-sample-app.
 
-Once you have decided:
-
-    - Tell your teammate which option you chose.
-    - Update the "stays private" line in README.md and the last bullet of CLAUDE.md
-      section 2 so they say what we are actually doing.
+Left for Phase 4 and Phase 8 (code, not settings): pipeline.yml itself, which goes in
+the private repo; the GitHub notifier, which must post to DEVSECOPS_APP_REPO; and
+scripts/run_seeded_changes.py, which must push its branches to the private repo.
 
 ci.yml is not affected by any of this. It uses only GitHub's machines.
 

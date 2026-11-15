@@ -1,8 +1,9 @@
 # CI for the pipeline's own code: lint and tests on every pull request and on main.
 #
-# This is not the DevSecOps pipeline itself. That one (pipeline.yml, CLAUDE.md §2) runs on
-# the self-hosted runner and evaluates sample_app. This workflow runs on GitHub's own
-# machines, needs no secrets, and only checks that the code in this repo still works.
+# This is not the DevSecOps pipeline itself. That one (pipeline.yml, CLAUDE.md §2) lives in
+# the private app repo, runs on the self-hosted runner and evaluates the app there. This
+# workflow runs on GitHub's own machines, needs no secrets, and only checks that the code
+# in this repo still works.
 name: CI
 
 on:
