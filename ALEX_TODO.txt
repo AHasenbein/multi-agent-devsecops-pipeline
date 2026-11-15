@@ -18,10 +18,12 @@ The invitation to vdadd for AHasenbein/devsecops-sample-app was sent but not acc
 on 11/15. Add nobody else: anyone who can push there can trigger runs on our host.
 
 
-3. Get pull requests reviewed
------------------------------
-main now needs one approval and five green checks, with no exception for admins. Every
-pull request, including yours, waits for your teammate's approval.
+3. Review your teammate's pull requests
+---------------------------------------
+main needs a pull request and five green checks from everyone. It also needs one
+approval, which repo admins may bypass. You are the only admin, so you can merge your
+own pull requests once they are green (tick "Merge without waiting for requirements to
+be met"), and your teammate's pull requests wait for your approval.
 
 
 4. Add the two secrets that need your accounts (before Phase 4 and Phase 7)
@@ -67,9 +69,10 @@ Left for Phase 4 and Phase 8 (code, not settings)
 Done
 ----
 - The five CI checks have run (pull request #5).
-- 11/15: ruleset "protect-main" is active on main: pull request required, one
-  approval, and the five checks (Lint (ruff), Tests (Python 3.11), Tests (Python
-  3.15), Docker sandbox tests, Seeded changes (30 patches)).
+- 11/15: two rulesets are active on main. "protect-main" has no bypass: pull request
+  required, and the five checks (Lint (ruff), Tests (Python 3.11), Tests (Python
+  3.15), Docker sandbox tests, Seeded changes (30 patches)). "review-main" requires
+  one approval and lets repo admins bypass it on a pull request.
 - Actions settings: fork pull requests need approval for all external contributors;
   workflow permissions are read-only.
 - This repo is public. The private app repo exists with the same layout, and all 30
