@@ -32,7 +32,7 @@ cd sample_app && uv run --project .. python -m pytest --cov=app   # run the samp
 
 Every pull request and every push to `main` runs these same checks on GitHub (`.github/workflows/ci.yml`): lint, the tests on Python 3.11 and 3.15, the Docker sandbox tests, and the seeded-change check. A pull request should be green before it is merged.
 
-To see the pipeline work on this checkout without GitHub (needs Docker running):
+To see the pipeline work on a checkout without GitHub. These two need Docker, so run them on the team host over SSH, not on a laptop (`CLAUDE.md` §2):
 
 ```bash
 uv run python scripts/run_local.py --fast   # build, test, scan, decide, deploy, monitor
