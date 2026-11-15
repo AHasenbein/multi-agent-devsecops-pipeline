@@ -17,6 +17,8 @@ The project is split across two repos so that a self-hosted GitHub Actions runne
 
 The self-hosted runner is registered to the private app repo only. Pull requests to this repo run `ci.yml` on GitHub's own machines and never reach the team host. The host runs the Control API from a pinned commit of this repo and reads `policy.yaml` from that install, never from the commit being evaluated.
 
+The runner is installed on the team host, an always-on server, by `scripts/install_runner.sh`. It runs there as a systemd service next to Docker and the Control API, under the name `team-host` with the label `devsecops-host`. The server's address and login are kept out of this repo (`CLAUDE.md` §2).
+
 The app repo's name and layout reach the pipeline through environment variables (`devsecops/config.py`): `DEVSECOPS_APP_REPO`, `DEVSECOPS_APP_DIR`, `DEVSECOPS_APP_IMAGE` and `DEVSECOPS_POLICY_PATH`. The defaults fit this repo's `sample_app/`, so the commands below need none of them.
 
 ## Development
@@ -32,7 +34,7 @@ cd sample_app && uv run --project .. python -m pytest --cov=app   # run the samp
 
 Every pull request and every push to `main` runs these same checks on GitHub (`.github/workflows/ci.yml`): lint, the tests on Python 3.11 and 3.15, the Docker sandbox tests, and the seeded-change check. A pull request should be green before it is merged.
 
-To see the pipeline work on this checkout without GitHub (needs Docker running):
+To see the pipeline work on a checkout without GitHub. These two need Docker, so run them on the team host over SSH, not on a laptop (`CLAUDE.md` §2):
 
 ```bash
 uv run python scripts/run_local.py --fast   # build, test, scan, decide, deploy, monitor

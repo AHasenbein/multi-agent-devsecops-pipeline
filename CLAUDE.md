@@ -42,7 +42,7 @@ If the docs conflict, the FINAL v1.3.7 wins on architecture and the Requirements
 Developer ──push/PR──▶ GitHub (private app repo, Actions: pipeline.yml)
                               │ job dispatch
                               ▼
-┌──────────────── Team host (Linux/macOS, Python 3.11+, Docker) ─────────────────┐
+┌── Team host (always-on server: Ubuntu 24.04 in WSL2, Python 3.12, Docker) ─────┐
 │  Self-hosted Actions runner ──HTTP POST /runs──▶  Control API (FastAPI daemon)  │
 │                                                   │  (pinned install of this    │
 │                                                   ▼   public repo + policy.yaml)│
@@ -57,6 +57,12 @@ Developer ──push/PR──▶ GitHub (private app repo, Actions: pipeline.yml
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+- **The team host is the always-on server, never a developer laptop** (decided 11/15). Docker, the sandbox, the self-hosted runner and the Control API all live in one Ubuntu 24.04 WSL2 distro named `devsecops` on that server, set up by `scripts/provision_host.sh`. Laptops only edit code and push.
+  - **Do not start Docker or the sandbox on a laptop.** `scripts/run_local.py`, `scripts/demo_sandbox.py` and `pytest -m docker` run on the host over SSH, from the checkout in the `devsecops` user's home directory. Everything else (`pytest -m "not docker"`, ruff, `scripts/check_seeded_changes.py`) needs no Docker and runs anywhere. CI runs the Docker tests on GitHub's machines.
+  - **The server's address, login and hostname never go in this repo**, which is public. Keep them in the gitignored `.env` or your SSH config.
+  - The distro stays up through `instanceIdleTimeout=-1` in the server's `.wslconfig` and a logon task that starts it. Docker starts with it through systemd.
+  - **The self-hosted runner is on that server too** (installed 11/15 by `scripts/install_runner.sh`). It sits in `/home/devsecops/actions-runner` inside the `devsecops` distro, runs as the `devsecops` user under a systemd service named `actions.runner.<owner>-<app-repo>.team-host`, and starts with the distro. It is registered to the private app repo only, under the name `team-host` with the labels `self-hosted, Linux, X64, devsecops-host`. `pipeline.yml` should use `runs-on: [self-hosted, devsecops-host]`.
+  - **The host's settings and secrets are in `.env` in the host's checkout** (gitignored, mode 600): `DEVSECOPS_APP_REPO`, `CONTROL_API_TOKEN`, and later `ANTHROPIC_API_KEY` and a GitHub token for the notifier. `CONTROL_API_TOKEN` has the same value as the app repo's Actions secret of that name. The checkout is pinned by detaching it at a commit (`git checkout --detach <commit>`).
 - **The Control API is a long-running daemon on the host** (systemd/launchd or `uvicorn` in tmux). It is **not** started per Actions job. Escalated runs can stay paused for up to 24 h, so pipeline state must persist across process restarts. Use the LangGraph SQLite checkpointer plus an `approvals` table with a `deadline_at` column.
 - **The GitHub workflow is a thin trigger.** It calls `POST /runs` with the commit info, then polls `GET /runs/{id}` until a decision exists and exits non-zero on DENY. Deploy + monitoring (5 min) continue asynchronously after the decision is posted.
 - **There are two different FastAPI apps.** Keep them in separate directories with separate dependencies.
@@ -127,6 +133,8 @@ multi-agent-devsecops-pipeline/
 ├── scripts/
 │   ├── check_seeded_changes.py   # offline: applies each patch to a temp copy, runs the tools + RuleEngine
 │   ├── run_seeded_changes.py     # applies each patch on a branch of the private app repo, pushes, collects decisions
+│   ├── provision_host.sh         # one-time setup of the team host: Docker Engine, git, uv, the devsecops user (§2)
+│   ├── install_runner.sh         # one-time: installs the self-hosted runner on the team host, registered to the private app repo (§2)
 │   └── install_daemon.sh
 └── tests/
     ├── unit/                     # rule engine, evidence chain, each agent with fake tools
@@ -362,6 +370,6 @@ All timers come from `policy.yaml` `timers` / `config.py` so tests can shorten t
 
 - Python 3.11+, type hints, Pydantic v2, `ruff` + `pytest`. Keep the agents thin and put logic in `policy/` and `tools/`.
 - Every new rule or agent behavior gets a unit test that names the FR it covers.
-- Never commit `.env`, API keys, or `evidence.db`. Use GitHub secrets in the private app repo for `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, and `CONTROL_API_TOKEN`. This public repo holds no secrets.
+- Never commit `.env`, API keys, or `evidence.db`. Use GitHub secrets in the private app repo for `ANTHROPIC_API_KEY` and `CONTROL_API_TOKEN`. GitHub provides `GITHUB_TOKEN` to each job by itself, and does not allow a secret with a name that starts with `GITHUB_`. This public repo holds no secrets.
 - Each change goes on a branch and is reviewed by the other teammate (process constraint from the Requirements doc).
 - Out of scope: production deploys, non-Python languages, container image scanning, Kubernetes, and real user data.
