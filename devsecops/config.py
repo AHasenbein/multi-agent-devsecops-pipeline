@@ -11,7 +11,7 @@ these settings (CLAUDE.md §2 and §11 items 3 and 10).
     DEVSECOPS_APP_IMAGE    Docker image name for the app's builds (default "sample_app")
     DEVSECOPS_POLICY_PATH  the trusted policy.yaml (default: the one in this install)
 
-Secrets (GITHUB_TOKEN, CONTROL_API_TOKEN, ANTHROPIC_API_KEY) are not settings and are never
+Secrets (GITHUB_TOKEN, CONTROL_API_TOKEN, OPENROUTER_API_KEY) are not settings and are never
 stored here. The code that needs one reads it from the environment at the point of use.
 """
 
