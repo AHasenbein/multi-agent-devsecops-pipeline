@@ -2,7 +2,8 @@
 
     uv run python scripts/run_local.py                 # evaluate + deploy (takes ~5 min: FR17)
     uv run python scripts/run_local.py --fast          # 1 s health checks for 10 s
-    uv run python scripts/run_local.py --event pull_request   # evaluate only, no deploy
+    uv run python scripts/run_local.py --no-deploy     # evaluate only
+    uv run python scripts/run_local.py --event pull_request   # deploys too, like a push
     uv run python scripts/run_local.py --workspace /path/to/app/checkout --fast
 
 The app's directory inside the workspace, its image name and the trusted policy path come
@@ -75,6 +76,7 @@ def main() -> None:
     parser.add_argument("--workspace", type=Path, default=REPO_ROOT)
     parser.add_argument("--event", choices=["push", "pull_request"], default="push")
     parser.add_argument("--fast", action="store_true", help="1 s health checks for 10 s")
+    parser.add_argument("--no-deploy", action="store_true", help="evaluate only")
     args = parser.parse_args()
     workspace = args.workspace.resolve()
 
@@ -106,6 +108,8 @@ def main() -> None:
         monitoring_agent=MonitoringAgent(sandbox, HealthChecker(timeout_s=2), timers),
         setup_check=SetupValidator(docker, policy_path, required_env=()).problems,
     )
+    if args.no_deploy:
+        deps.deploy_events = frozenset()
     orchestrator = Orchestrator(deps, sqlite_checkpointer(state_dir / "checkpoints.db"))
 
     run = PipelineRun(

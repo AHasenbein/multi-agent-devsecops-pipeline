@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from devsecops.api.main import ApiServices, create_app, create_app_from_env
 from devsecops.config import ConfigError
-from devsecops.models import HealthCheck, TestFailure, TestReport
+from devsecops.models import EventType, HealthCheck, PipelineRun, TestFailure, TestReport
 from devsecops.tools import Checkout, ScanOutput
 from devsecops.tools import WorkspaceError as FakeWorkspaceError
 
@@ -182,10 +182,33 @@ def test_fr12_changed_files_from_the_checkout_reach_the_rules(api):
     assert view["decision"]["matched_rules"] == ["important_file_changed"]
 
 
-def test_pull_request_run_is_evaluated_and_not_deployed(api):
+def test_pull_request_run_is_deployed_like_a_push(api):
+    """CLAUDE.md §11 item 2."""
     view = api.view(api.start("pull_request", pr_number=7))
-    assert (view["status"], view["event"], view["pr_number"]) == ("ALLOWED", "pull_request", 7)
-    assert LIVE not in api.docker.containers
+    assert (view["status"], view["event"], view["pr_number"]) == ("DEPLOYED", "pull_request", 7)
+    assert api.docker.containers[LIVE]["image"] == IMAGE
+
+
+def test_daemon_start_closes_a_run_the_previous_process_left_unfinished(api):
+    """CLAUDE.md §11 item 12: without this the workflow would poll a stuck run forever."""
+    run = PipelineRun(commit_sha=SHA, branch="main", author="dev", event="push")
+    api.pipeline.evidence.append(run.run_id, EventType.RUN_STARTED, run)  # then the process died
+    stuck = api.view(run.run_id)
+    assert (stuck["status"], stuck["decided"]) == ("RUNNING", False)
+
+    with api.client:  # entering the client starts the app, as uvicorn does
+        view = api.view(run.run_id)
+
+    assert (view["status"], view["decided"]) == ("ERROR", True)
+    assert [entry["event_type"] for entry in view["evidence"]] == [
+        "RUN_STARTED",
+        "AGENT_ERROR",
+        "RUN_FINISHED",
+    ]
+    assert [call[:2] for call in api.notifier.calls] == [
+        ("alert", "Pipeline run interrupted"),
+        ("set_status", "error"),
+    ]
 
 
 @pytest.mark.parametrize(

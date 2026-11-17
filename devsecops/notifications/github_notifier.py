@@ -43,6 +43,7 @@ class GitHubNotifier:
         client: httpx.Client | None = None,
         api_url: str = "https://api.github.com",
         context: str = "devsecops/pipeline",
+        approve_workflow: str = "approve.yml",
         max_items: int = 10,
         timeout_s: float = 10.0,
     ) -> None:
@@ -51,6 +52,7 @@ class GitHubNotifier:
         self._client = client or httpx.Client(follow_redirects=False)
         self._api_url = api_url.rstrip("/")
         self._context = context
+        self._approve_workflow = approve_workflow
         self._max_items = max_items
         self._timeout_s = timeout_s
         self._headers = {
@@ -96,9 +98,18 @@ class GitHubNotifier:
             f"- **Answer by:** {deadline:%Y-%m-%d %H:%M} UTC. Without an answer the change"
             " is denied.",
             "",
-            "To answer, send `POST /runs/approval` to the Control API with this run id and"
-            " commit, your GitHub login as `reviewer`, and `verdict` set to `APPROVE` or"
-            " `REJECT`.",
+            f"To answer, run the `{self._approve_workflow}` workflow in this repository"
+            " (Actions tab, **Run workflow**) with the run and commit above and `verdict` set"
+            " to `APPROVE` or `REJECT`. From a terminal:",
+            "",
+            # Every value in this block is ours: the repo from the host's settings, the
+            # run id we generated, and a commit id the API accepted as 40 hex digits.
+            "```text",
+            f"gh workflow run {self._approve_workflow} -R {self._repo}"
+            f" -f run_id={run.run_id} -f commit_sha={run.commit_sha} -f verdict=APPROVE",
+            "```",
+            "",
+            "The workflow records whoever started it as the reviewer.",
         ]
         self._comment(run, "\n".join(lines))
 

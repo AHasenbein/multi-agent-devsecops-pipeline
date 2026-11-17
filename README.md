@@ -13,7 +13,7 @@ The project is split across two repos so that a self-hosted GitHub Actions runne
 | Repo | Visibility | Holds |
 |---|---|---|
 | this one | public | the pipeline's code, `policy.yaml`, the tests, and `sample_app/` as the example app and test fixture |
-| the app repo | **private**, write access for the team only | the copy of the app that is pushed to, evaluated and deployed, plus `.github/workflows/pipeline.yml` |
+| the app repo | **private**, write access for the team only | the copy of the app that is pushed to, evaluated and deployed, plus `.github/workflows/pipeline.yml` and `approve.yml` |
 
 The self-hosted runner is registered to the private app repo only. Pull requests to this repo run `ci.yml` on GitHub's own machines and never reach the team host. The host runs the Control API from a pinned commit of this repo and reads `policy.yaml` from that install, never from the commit being evaluated.
 
