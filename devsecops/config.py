@@ -10,6 +10,8 @@ these settings (CLAUDE.md §2 and §11 items 3 and 10).
                            (default "sample_app"; "." when the app is at the repo root)
     DEVSECOPS_APP_IMAGE    Docker image name for the app's builds (default "sample_app")
     DEVSECOPS_POLICY_PATH  the trusted policy.yaml (default: the one in this install)
+    DEVSECOPS_STATE_DIR    where the Control API keeps evidence.db, checkpoints.db, the deploy
+                           lock and the per-run checkouts (default ~/.devsecops)
 
 Secrets (GITHUB_TOKEN, CONTROL_API_TOKEN, OPENROUTER_API_KEY) are not settings and are never
 stored here. The code that needs one reads it from the environment at the point of use.
@@ -24,6 +26,7 @@ from pathlib import Path, PurePosixPath
 DEFAULT_APP_DIR = "sample_app"
 DEFAULT_APP_IMAGE = "sample_app"
 DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[1] / "policy.yaml"
+DEFAULT_STATE_DIR = Path.home() / ".devsecops"
 
 _REPO_NAME = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _IMAGE_NAME = re.compile(r"[a-z0-9]+(?:[._/-][a-z0-9]+)*")
@@ -39,6 +42,7 @@ class Settings:
     app_dir: str = DEFAULT_APP_DIR
     app_image: str = DEFAULT_APP_IMAGE
     policy_path: Path = DEFAULT_POLICY_PATH
+    state_dir: Path = DEFAULT_STATE_DIR
 
     def require_app_repo(self) -> str:
         """The app repo's owner/name, for code that cannot work without it."""
@@ -62,11 +66,13 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError("DEVSECOPS_APP_IMAGE must be a lowercase Docker image name, no tag")
 
     policy_path = value("DEVSECOPS_POLICY_PATH")
+    state_dir = value("DEVSECOPS_STATE_DIR")
     return Settings(
         app_repo=app_repo,
         app_dir=_app_dir(value("DEVSECOPS_APP_DIR") or DEFAULT_APP_DIR),
         app_image=app_image,
         policy_path=Path(policy_path).expanduser() if policy_path else DEFAULT_POLICY_PATH,
+        state_dir=Path(state_dir).expanduser() if state_dir else DEFAULT_STATE_DIR,
     )
 
 
