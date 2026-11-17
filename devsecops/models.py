@@ -46,7 +46,7 @@ class RunStatus(StrEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     AWAITING_REVIEW = "AWAITING_REVIEW"
-    ALLOWED = "ALLOWED"  # allowed or approved, but not deployed (pull request runs)
+    ALLOWED = "ALLOWED"  # allowed or approved, but not deployed (evaluate-only runs)
     DENIED = "DENIED"
     DEPLOYING = "DEPLOYING"
     MONITORING = "MONITORING"

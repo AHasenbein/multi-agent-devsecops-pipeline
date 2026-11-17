@@ -248,8 +248,19 @@ def test_fr2_run_started_record_has_run_id_commit_author_and_start_time(pipeline
     assert started["started_at"]
 
 
-def test_pull_request_run_is_evaluated_but_not_deployed(pipeline, docker, notifier):
-    """CLAUDE.md §11 item 2: PR runs evaluate and comment only."""
+def test_pull_request_run_is_deployed_like_a_push(pipeline, docker, notifier):
+    """CLAUDE.md §11 item 2: pull request runs deploy too."""
+    run, state = pipeline.start(event="pull_request")
+    assert state["status"] == "DEPLOYED"
+    assert state["decision"]["outcome"] == "ALLOW"
+    assert docker.containers[LIVE]["image"] == "sample_app:abc123"
+    assert "DEPLOY_RESULT" in pipeline.events(run)
+    assert notifier.calls[-1][:2] == ("set_status", "success")
+
+
+def test_run_whose_event_does_not_deploy_is_evaluated_only(pipeline, docker, notifier):
+    """The evaluate-only mode (scripts/run_local.py --no-deploy)."""
+    pipeline.deps.deploy_events = frozenset({"push"})
     run, state = pipeline.start(event="pull_request")
     assert state["status"] == "ALLOWED"
     assert state["decision"]["outcome"] == "ALLOW"
@@ -399,7 +410,17 @@ def test_ts_06_01_timeout_denies_and_notifies_the_developer(pipeline, world, doc
     assert notifier.calls[-1][:2] == ("set_status", "failure")
 
 
-def test_approved_pull_request_run_is_not_deployed(pipeline, world, docker):
+def test_approved_pull_request_run_is_deployed(pipeline, world, docker):
+    world.bandit = ScanOutput(findings=[MEDIUM])
+    run, _ = pipeline.start(event="pull_request")
+    assert not docker_ran(docker)
+    state = pipeline.answer(run, Verdict.APPROVE)
+    assert state["status"] == "DEPLOYED"
+    assert docker.containers[LIVE]["image"] == "sample_app:abc123"
+
+
+def test_approved_run_whose_event_does_not_deploy_is_not_deployed(pipeline, world, docker):
+    pipeline.deps.deploy_events = frozenset({"push"})
     world.bandit = ScanOutput(findings=[MEDIUM])
     run, _ = pipeline.start(event="pull_request")
     state = pipeline.answer(run, Verdict.APPROVE)
@@ -421,6 +442,83 @@ def test_paused_review_survives_a_daemon_restart(tmp_path, world, docker, checke
     assert docker.containers[LIVE]["image"] == "sample_app:abc123"
     assert world.calls.count("build") == 1  # earlier steps were not run again
     assert after.evidence.verify_chain().ok
+
+
+class Killed(BaseException):
+    """Stands in for the daemon process dying: nothing in the pipeline catches it."""
+
+
+def die(*args, **kwargs):
+    raise Killed
+
+
+def test_run_cut_off_by_a_daemon_restart_is_closed_as_error(
+    tmp_path, world, docker, checker, notifier
+):
+    """CLAUDE.md §11 item 12: at start, an unfinished run gets a final ERROR record and the
+    developer is told (FR2, FR3)."""
+    world.build = die
+    before = Pipeline(tmp_path, world, docker, checker, notifier)
+    with pytest.raises(Killed):
+        before.start()
+    run_id = before.evidence.list_runs()[0].run_id
+    assert before.evidence.get_run(run_id)[-1].event_type.value != "RUN_FINISHED"
+    del before
+
+    after = Pipeline(tmp_path, world, docker, checker, RecordingNotifier())
+    tell_developers = after.orchestrator.fail_interrupted_runs()
+    records = after.evidence.get_run(run_id)
+    assert [r.event_type.value for r in records][-2:] == ["AGENT_ERROR", "RUN_FINISHED"]
+    assert json.loads(records[-1].payload_json) == {"status": "ERROR", "outcome": None}
+    assert after.notifier.calls == []  # GitHub is told only when the caller says so
+
+    tell_developers()
+    assert [call[:2] for call in after.notifier.calls] == [
+        ("alert", "Pipeline run interrupted"),
+        ("set_status", "error"),
+    ]
+    assert "Push the commit again" in after.notifier.calls[0][2]
+    assert "sandbox" not in after.notifier.calls[0][2]
+
+    # A later start finds nothing left to close.
+    after.orchestrator.fail_interrupted_runs()()
+    assert len(after.evidence.get_run(run_id)) == len(records)
+    assert len(after.notifier.calls) == 2
+    assert after.evidence.verify_chain().ok
+
+
+def test_run_cut_off_while_monitoring_says_the_sandbox_was_not_checked(
+    tmp_path, world, docker, checker, notifier
+):
+    class Dying(Checker):
+        check = die
+
+    before = Pipeline(tmp_path, world, docker, Dying(), notifier)
+    with pytest.raises(Killed):
+        before.start()
+    run_id = before.evidence.list_runs()[0].run_id
+    del before
+
+    after = Pipeline(tmp_path, world, docker, checker, RecordingNotifier())
+    after.orchestrator.fail_interrupted_runs()()
+    finished = json.loads(after.evidence.get_run(run_id)[-1].payload_json)
+    assert finished == {"status": "ERROR", "outcome": "ALLOW"}
+    assert "the sandbox may hold a version" in after.notifier.named("alert")[0][2]
+
+
+def test_restart_leaves_finished_and_paused_runs_alone(tmp_path, world, docker, checker, notifier):
+    before = Pipeline(tmp_path, world, docker, checker, notifier)
+    done, _ = before.start(sha="aaa111")
+    world.bandit = ScanOutput(findings=[MEDIUM])
+    paused, _ = before.start(sha="bbb222")
+    events = {run.run_id: before.events(run) for run in (done, paused)}
+    del before
+
+    after = Pipeline(tmp_path, world, docker, checker, RecordingNotifier())
+    after.orchestrator.fail_interrupted_runs()()
+    assert after.notifier.calls == []
+    assert {run.run_id: after.events(run) for run in (done, paused)} == events
+    assert after.answer(paused, Verdict.APPROVE)["status"] == "DEPLOYED"
 
 
 def test_approval_for_the_wrong_commit_is_refused(pipeline, world, docker):
@@ -607,6 +705,7 @@ def test_qa_sc_01_five_runs_at_once_each_get_their_own_correct_record(
     """5 pushes at once: each record has exactly its own run's events and the right outcome."""
     world = World()
     pipeline = Pipeline(tmp_path, world, docker, checker, notifier)
+    pipeline.deps.deploy_events = frozenset({"push"})  # evaluate only: no queue for the lock
     results = {}
 
     def push(n):

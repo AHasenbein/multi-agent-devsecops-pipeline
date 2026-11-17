@@ -263,7 +263,13 @@ def test_fr14_review_request_mentions_the_reviewers_and_the_deadline(notifier, g
     assert "- **Run:** `run-1`" in body and f"- **Commit:** `{SHA}`" in body
     assert "- **Rules matched:** `medium_finding`" in body
     assert "- **Answer by:** 2026-11-20 14:30 UTC" in body
-    assert "`POST /runs/approval`" in body
+    # CLAUDE.md §11 item 7: the reviewer answers through the approve workflow.
+    assert "run the `approve.yml` workflow in this repository" in body
+    assert (
+        "gh workflow run approve.yml -R someone/notes-app -f run_id=run-1"
+        f" -f commit_sha={SHA} -f verdict=APPROVE"
+    ) in body
+    assert "POST /runs/approval" not in body
 
 
 def test_fr18_alert_is_posted_with_its_details(notifier, github):

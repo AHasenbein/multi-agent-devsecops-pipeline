@@ -6,6 +6,9 @@ A long-running daemon on the team host, not something a workflow job starts:
 
 It needs CONTROL_API_TOKEN, GITHUB_TOKEN and DEVSECOPS_APP_REPO in its environment. Every
 route except GET /health asks for ``Authorization: Bearer <CONTROL_API_TOKEN>``.
+
+When it starts, it closes the runs that the previous process left unfinished as ERROR
+(CLAUDE.md §11 item 12). Runs paused for review are kept.
 """
 
 import functools
@@ -65,6 +68,9 @@ def create_app(services: ApiServices) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Before the first request is served: a run that the previous process left
+        # unfinished gets its final ERROR record. GitHub is told in the background.
+        services.submit(services.orchestrator.fail_interrupted_runs())
         yield
         services.shutdown()
 

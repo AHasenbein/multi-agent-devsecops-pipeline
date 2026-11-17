@@ -57,6 +57,9 @@ class PipelineDeps:
     monitoring_agent: Agent
     setup_check: Callable[[], list[str]] = lambda: []
     deploy_lock_timeout_s: float = 3600
+    # CLAUDE.md §11 item 2: pushes and pull request runs both deploy. A run whose event is
+    # not listed is evaluated only and ends as ALLOWED (scripts/run_local.py --no-deploy).
+    deploy_events: frozenset[str] = frozenset({"push", "pull_request"})
 
 
 _FINAL_COMMIT_STATE: dict[RunStatus, CommitState] = {
@@ -96,8 +99,7 @@ def build_graph(deps: PipelineDeps, checkpointer: Any):
         return result, result.data
 
     def deploys(state: PipelineState) -> bool:
-        """CLAUDE.md §11 item 2: pull request runs evaluate only. Pushes deploy."""
-        return state["run"]["event"] == "push"
+        return state["run"]["event"] in deps.deploy_events
 
     def authorized(state: PipelineState) -> bool:
         """Deploy only on ALLOW, or ESCALATE with an APPROVE for this run (G6)."""

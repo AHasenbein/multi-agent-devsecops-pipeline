@@ -30,7 +30,7 @@ If the docs conflict, the FINAL v1.3.7 wins on architecture and the Requirements
 5. **Claude availability retry is a separate mechanism:** retry 3 times, then use a template reason. The extra delay is at most 30 s total, and the decision never changes (QA-AV-01).
 6. **Evidence is append-only.** `EvidenceStore` exposes only `append()`, `get_run()`, `list_runs()`, and `verify_chain()`. Each row stores `prev_hash` and `hash = sha256(prev_hash + canonical_json(row))`. There is no update or delete method. Add SQLite triggers that `RAISE(ABORT)` on UPDATE/DELETE as defense in depth (FR19).
 7. **Deploys are serialized.** A single global lock (file lock or a SQLite `deploy_lock` row) protects deploy + monitor, so two runs can't overwrite each other's rollback target (FINAL §2.1.3).
-8. **Reviewer authorization:** an approval is accepted only if the reviewer is listed in `policy.yaml` `reviewers` **and** the request's `run_id` + `commit_sha` match a run that is currently paused in ESCALATE. Anything else gets a 403.
+8. **Reviewer authorization:** an approval is accepted only if the reviewer is listed in `policy.yaml` `reviewers` **and** the request's `run_id` + `commit_sha` match a run that is currently paused in ESCALATE. Anything else gets a 403. Reviewers answer through the approve workflow in the app repo, which sends the GitHub login of whoever started it (§7). The API itself takes the name from any caller that holds the bearer token; the report must state this limit.
 9. **The old version is always kept** before a new container starts, so a rollback target always exists (FR16).
 10. **No secrets in logs, run records, or prompts.** Keys come from env / GitHub secrets. Only the diff and findings are sent to Claude, after redaction (QA-PR-01).
 
@@ -63,14 +63,14 @@ Developer ──push/PR──▶ GitHub (private app repo, Actions: pipeline.yml
   - The distro stays up through `instanceIdleTimeout=-1` in the server's `.wslconfig` and a logon task that starts it. Docker starts with it through systemd.
   - **The self-hosted runner is on that server too** (installed 11/15 by `scripts/install_runner.sh`). It sits in `/home/devsecops/actions-runner` inside the `devsecops` distro, runs as the `devsecops` user under a systemd service named `actions.runner.<owner>-<app-repo>.team-host`, and starts with the distro. It is registered to the private app repo only, under the name `team-host` with the labels `self-hosted, Linux, X64, devsecops-host`. `pipeline.yml` should use `runs-on: [self-hosted, devsecops-host]`.
   - **The host's settings and secrets are in `.env` in the host's checkout** (gitignored, mode 600): `DEVSECOPS_APP_REPO`, `CONTROL_API_TOKEN`, and later `OPENROUTER_API_KEY` (§10) and `GITHUB_TOKEN` for the notifier. `CONTROL_API_TOKEN` has the same value as the app repo's Actions secret of that name. The checkout is pinned by detaching it at a commit (`git checkout --detach <commit>`).
-- **The Control API is a long-running daemon on the host** (systemd/launchd or `uvicorn` in tmux). It is **not** started per Actions job. Escalated runs can stay paused for up to 24 h, so pipeline state must persist across process restarts. Use the LangGraph SQLite checkpointer plus an `approvals` table with a `deadline_at` column.
+- **The Control API is a long-running daemon on the host** (systemd/launchd or `uvicorn` in tmux). It is **not** started per Actions job. Escalated runs can stay paused for up to 24 h, so pipeline state must persist across process restarts. Use the LangGraph SQLite checkpointer plus an `approvals` table with a `deadline_at` column. A run that is in progress (not paused) when the daemon stops is not resumed: at its next start the daemon closes it as ERROR and alerts the developer (§11 item 12).
 - **The GitHub workflow is a thin trigger.** It calls `POST /runs` with the commit info, then polls `GET /runs/{id}` until a decision exists and exits non-zero on DENY. Deploy + monitoring (5 min) continue asynchronously after the decision is posted.
 - **There are two different FastAPI apps.** Keep them in separate directories with separate dependencies.
   - `devsecops/` — the pipeline's Control API (port e.g. 8000).
   - `sample_app/` — the app *being evaluated and deployed* (container port 8080, exposes `GET /health`).
 - **There are two repos** (decided 11/15; the design PDFs assume one, so the final report must say why we split). A self-hosted runner on a public repo would let a stranger's pull request run code on the team host.
   - **This repo is public.** It holds the pipeline code, `policy.yaml`, the tests, the 30 seeded patches, and `sample_app/` as the example app and test fixture. Its only workflow is `ci.yml`, which runs on GitHub's machines. **Never add a workflow with `runs-on: self-hosted` to this repo.**
-  - **The app repo is private**, with write access for the two of us only (and the grader if needed). It holds the copy of the app that is pushed to, evaluated and deployed, plus `.github/workflows/pipeline.yml`. It is the only repo the self-hosted runner is registered to. It keeps this repo's layout: `sample_app/`, `.github/workflows/`, and a top-level `policy.yaml` that the pipeline never reads (E09 changes it to show that).
+  - **The app repo is private**, with write access for the two of us only (and the grader if needed). It holds the copy of the app that is pushed to, evaluated and deployed, plus `.github/workflows/pipeline.yml` and `.github/workflows/approve.yml` (§7). It is the only repo the self-hosted runner is registered to. It keeps this repo's layout: `sample_app/`, `.github/workflows/`, and a top-level `policy.yaml` that the pipeline never reads (E09 changes it to show that).
   - **The host runs a pinned install of this repo** (a tag or commit, never "latest main") and reads `policy.yaml` from that install. Moving the pin is a deliberate step, because whatever commit is pinned runs on our machine.
   - **Nothing in `devsecops/` may assume the app sits next to the pipeline.** The app repo's name, the app's directory inside a checkout, the image name and the policy path come from `devsecops/config.py` (`DEVSECOPS_APP_REPO`, `DEVSECOPS_APP_DIR`, `DEVSECOPS_APP_IMAGE`, `DEVSECOPS_POLICY_PATH`). The defaults fit this repo's `sample_app/`, so tests and local runs need no setup.
 
@@ -84,7 +84,7 @@ multi-agent-devsecops-pipeline/
 ├── pyproject.toml                # pipeline deps: fastapi, uvicorn, langgraph, langgraph-checkpoint-sqlite,
 │                                 #   pydantic, pyyaml, anthropic, httpx, bandit, pip-audit, pytest, pytest-cov, docker
 ├── policy.yaml                   # trusted copy = the one in the host's pinned install; see §6 and §11
-├── .github/workflows/ci.yml      # lint + tests on GitHub's machines. pipeline.yml lives in the private app repo (§2)
+├── .github/workflows/ci.yml      # lint + tests on GitHub's machines. pipeline.yml and approve.yml live in the private app repo (§2)
 ├── devsecops/
 │   ├── api/                      # FR1, FR14, FR20 — RunsController, ApprovalController, policies, health
 │   │   ├── main.py               # FastAPI app factory
@@ -224,6 +224,8 @@ START → setup_check ─(fail)→ finish_error
 - Compile with a **SQLite checkpointer** (`langgraph-checkpoint-sqlite`) and `thread_id = run_id`, so a paused review survives a restart.
 - `human_review` uses LangGraph `interrupt()`. The approval endpoint resumes it with `Command(resume=verdict)`.
 - **Timeout sweeper:** a background task in the Control API runs every 30–60 s. It finds approvals with `deadline_at < now` and resumes those runs with `TIMEOUT`. Because it reads from the DB, it works after a restart (FR15).
+- **Which runs deploy:** pushes and pull request runs both (§11 item 2). The set is `PipelineDeps.deploy_events`; a run whose event is not in it is evaluated only and ends as `ALLOWED`, which is what `scripts/run_local.py --no-deploy` uses.
+- **Restart:** when the daemon starts, `Orchestrator.fail_interrupted_runs()` gives every run without a `RUN_FINISHED` record that is not paused for review an `AGENT_ERROR` and a final `RUN_FINISHED` (ERROR) record, then sets an error commit status and alerts the developer (§11 item 12).
 - Run each graph invocation in a background task or thread so that `POST /runs` returns immediately with a `run_id`.
 - Concurrency (QA-SC-01): runs are isolated by `run_id`. Only deploy/monitor is serialized via the lock. Use SQLite WAL mode.
 
@@ -274,7 +276,9 @@ The loader validates this file with Pydantic. An invalid policy fails `SetupVali
 | `GET /policies` | active PolicySet as JSON | — |
 | `GET /health` | Control API health | — |
 
-Protect the API with a shared bearer token stored as a GitHub secret + host env var, and bind it to localhost unless reviewers need remote access. Every route except `GET /health` needs the token.
+Protect the API with a shared bearer token stored as a GitHub secret + host env var, and bind it to localhost. Every route except `GET /health` needs the token.
+
+Reviewers never call the API themselves (decided 11/16). They start `approve.yml` in the private app repo: a `workflow_dispatch` workflow on the self-hosted runner with the inputs `run_id`, `commit_sha` and `verdict`. It sends `POST /runs/approval` with `reviewer` set to `github.triggering_actor`, so GitHub vouches for who answered. The review-request comment gives the reviewer the exact `gh workflow run` command.
 
 The Control API never takes a checkout path from the request. It fetches the commit from the app repo itself into `DEVSECOPS_STATE_DIR/workspaces/<run_id>` (`tools/git_workspace.py`) and deletes that checkout when the run ends or pauses.
 
@@ -319,7 +323,7 @@ Each phase must meet its exit criterion before the next phase starts. Phases 1�
    *Exit:* integration tests drive the ALLOW, DENY (build fail, test fail, HIGH), and ESCALATE paths end-to-end with fake tools.
 4. **Control API + workflow + GitHub notifier.** Build the endpoints from §7, `SetupValidator`, commit status, and a PR comment that shows the decision, matched rule, and top findings with file:line (QA-US-01). Install the self-hosted runner and the daemon.
    *Exit:* a real push produces a decision posted on GitHub.
-5. **Escalation.** Build the `interrupt`/resume flow, reviewer authorization, and the timeout sweeper.
+5. **Escalation.** Build the `interrupt`/resume flow, reviewer authorization, `approve.yml` in the app repo (§7), and the timeout sweeper.
    *Exit:* TS-06-01 passes (approve → deploy, reject → stop, no answer → DENY after the 2-min test timer), including after a daemon restart.
 6. **Deploy + monitor + rollback.** Build the deploy lock, old-container retention, health loop, rollback, and rollback-failure alert.
    *Exit:* TS-08-01 passes. Rollback happens within 2 min.
@@ -334,8 +338,8 @@ Each phase must meet its exit criterion before the next phase starts. Phases 1�
 
 - **Provider (decided 11/16): Claude models are called through OpenRouter, not through Anthropic's API directly.** The key is `OPENROUTER_API_KEY` in the host's `.env`. This project has no `ANTHROPIC_API_KEY`.
 - SDK: still the official `anthropic` Python package, pointed at OpenRouter's Anthropic-compatible Messages endpoint (`POST https://openrouter.ai/api/v1/messages`). The base URL comes from `CLAUDE_BASE_URL`, default `https://openrouter.ai/api` (the SDK adds `/v1/messages` itself). Pass the key as the bearer token (`auth_token=`), which is how OpenRouter's own Claude Code guide sends it. **Not yet tried against a live request:** confirm the base URL and the auth argument with one real call at the start of Phase 7.
-- Model comes from an env var: `CLAUDE_MODEL`, default `anthropic/claude-opus-5.5`. OpenRouter's model names differ from Anthropic's: they start with `anthropic/` and write the version with a dot. The budget is capped at $25 for the semester, so the team may set a cheaper model (e.g. `anthropic/claude-haiku-5.5`) in `.env`. Don't hardcode the model ID.
-- Use one call per run, to write the reason only. Input: the frozen outcome, matched rules, top findings, and the redacted diff summary. Output: a short plain-text reason. Use `output_config={"effort": "low"}` and small `max_tokens` (~1024). Thinking can't be disabled on Opus 5.5; lowering effort is the control. Whether OpenRouter passes `output_config` through is also unconfirmed; check it in the same Phase 7 call and drop the argument if OpenRouter rejects it.
+- Model comes from an env var: `CLAUDE_MODEL`, default `anthropic/claude-sonnet-5.5` (decided 11/16: Sonnet 5.5 for every run, tests and demo alike). OpenRouter's model names differ from Anthropic's: they start with `anthropic/` and write the version with a dot. The budget is capped at $25 for the semester. Don't hardcode the model ID.
+- Use one call per run, to write the reason only. Input: the frozen outcome, matched rules, top findings, and the redacted diff summary. Output: a short plain-text reason. Use `output_config={"effort": "low"}` and small `max_tokens` (~1024). The effort setting was chosen for Opus 5.5, where thinking can't be disabled; check that it suits Sonnet 5.5 in the Phase 7 call. Whether OpenRouter passes `output_config` through is also unconfirmed; check it in the same Phase 7 call and drop the argument if OpenRouter rejects it.
 - Use the SDK's error classes (`anthropic.APIConnectionError`, `RateLimitError`, `APIStatusError`). Set `max_retries=0` on the client and do our own 3 retries inside the 30 s budget. After that, fall back to a template reason and set `reason_source="template"`. OpenRouter adds failures of its own, such as HTTP 402 when the account is out of credits. They arrive as `APIStatusError` and get the same template fallback.
 - Check `stop_reason == "refusal"` and fall back to the template in that case.
 - Treat the diff as untrusted. Put it in a clearly delimited user block and tell the model it is data. The outcome is already fixed, so injection can at worst garble the reason text.
@@ -343,21 +347,25 @@ Each phase must meet its exit criterion before the next phase starts. Phases 1�
 
 ---
 
-## 11. Open questions and doc conflicts — proposed defaults (team to confirm)
+## 11. Open questions and doc conflicts — decisions and proposed defaults
 
 | # | Issue | Proposed default |
 |---|---|---|
-| 1 | **Seeded test set.** The Requirements doc says 10 safe / 10 security / 10 build-or-test failures (all denied). FINAL says 10 safe / 10 high-risk / 10 medium-to-low risk. Under FR12, MEDIUM findings ESCALATE, not DENY. | Use FINAL's split. Pass criteria: high-risk → DENY (10/10), medium → ESCALATE and **never ALLOW**, safe → ALLOW ≥ 9/10. Define "risky change blocked" as "not ALLOWed". Record the expected outcome per change in `test_changes/manifest.yaml`. |
-| 2 | **Do PR runs deploy?** | PR runs evaluate and comment only. Pushes to `main` (or merge commits) deploy. |
+| 1 | **Seeded test set.** The Requirements doc says 10 safe / 10 security / 10 build-or-test failures (all denied). FINAL says 10 safe / 10 high-risk / 10 medium-to-low risk. Under FR12, MEDIUM findings ESCALATE, not DENY. | **Decided 11/16:** use FINAL's split. Pass criteria: high-risk → DENY (10/10), medium → ESCALATE and **never ALLOW**, safe → ALLOW ≥ 9/10. Define "risky change blocked" as "not ALLOWed". Record the expected outcome per change in `test_changes/manifest.yaml`. |
+| 2 | **Do PR runs deploy?** | **Decided 11/16: yes.** Pull request runs deploy like pushes to `main` (§5). Consequences: the sandbox and the rollback target can hold unmerged code, and in Phase 8 every allowed seeded change deploys and is monitored for 5 min behind the deploy lock. |
 | 3 | **Trusted policy source.** Not in the docs, but a real gap: if policy.yaml and the pipeline code are read from the commit being evaluated, a change can weaken its own rules. | Load `policy.yaml` from the host's pinned install of this repo (`DEVSECOPS_POLICY_PATH` can point elsewhere), never from the evaluated commit. Keep policy.yaml, workflows, Dockerfile, and requirements in `important_files` so changes to them ESCALATE. `devsecops/**` is not listed: with two repos (§2) the pipeline code cannot arrive in an evaluated commit, and changes to it are protected by this repo's pull-request review and CI. |
 | 4 | Retry counts: "2 retries" (agent schema) vs "3 retries" (Claude). | These are two separate mechanisms (§1 items 4–5). Both are configurable. |
 | 5 | Layer count: v2.0 has 5 layers, FINAL has 4. | Use FINAL's 4 layers (§3). |
 | 6 | `DockerClient` vs `DockerAdapter`; `RuleEngine` vs `PolicySet.evaluate()`. | `DockerClient`; `RuleEngine` evaluates, `PolicySet` holds data. |
-| 7 | How the reviewer is notified within 1 min. | A GitHub PR comment / commit status mentioning the reviewers, with a link to the approval endpoint. A small CLI (`scripts/approve.py`) wraps `POST /runs/approval`. |
+| 7 | How the reviewer is notified within 1 min. | **Decided 11/16:** a GitHub comment that @-mentions the reviewers, plus a pending commit status. No second channel. Reviewers answer by starting `approve.yml` in the app repo (§7), which replaces the planned `scripts/approve.py`. |
 | 8 | Append-only on SQLite can't stop a host admin. | Application-level append-only + triggers + hash chain + restricted file permissions (as FINAL states). Document this limitation in the report. |
 | 9 | What gets sent to Claude. | Only the diff and findings, after `redact.py` strips anything that looks like a key/token/password. Never send env values or full files. The request passes through OpenRouter on its way to Claude (#11), so the report must name both as recipients. |
 | 10 | Self-hosted runner vs. public repo. | **Decided 11/15: two repos** (§2). This repo is public; the app, `pipeline.yml` and the runner belong to a private app repo. |
 | 11 | Which API serves the Claude models. The design PDFs assume Anthropic's API. | **Decided 11/16: OpenRouter** (§10), still calling Claude models. The final report must say so. |
+| 12 | A run that is in progress when the daemon restarts. | **Decided 11/16:** it is not resumed. At start the daemon gives every unfinished run that is not paused for review a final ERROR record, an error commit status and an alert that tells the developer to push again (§5). If the run was deploying or being monitored, the alert says the sandbox was left unchecked; there is no automatic rollback. A run cut off before its first record (during the checkout) leaves no trace. |
+| 13 | Which Claude model writes the reasons. | **Decided 11/16: Sonnet 5.5** (`anthropic/claude-sonnet-5.5`) for every run (§10). |
+| 14 | Who the five test users for QA-US-01 are. | **Decided 11/16:** five CMPSC 320 classmates, each shown a screenshot of a real deny comment. Nobody gets access to the app repo for it. |
+| 15 | Grader access and the demo. | **Decided 11/16:** the grader gets read-only access to the app repo only if they ask. The demo is live, with a recording made once Phase 8 passes as the fallback. |
 
 ---
 
@@ -366,7 +374,7 @@ Each phase must meet its exit criterion before the next phase starts. Phases 1�
 - **TS-04-01 Risky change is denied:** push a failing-test change → DENY with the test name shown. Push a HIGH-finding change → DENY, nothing deployed. Repeat with Claude off → same decisions.
 - **TS-06-01 Reviewer decision:** escalated run, review timeout set to 120 s. Approve → deploys. Reject → stops and is saved. No answer → DENY after the timeout.
 - **TS-08-01 Failed deploy rolls back:** deploy a broken `/health` → 3 failed checks in about 30 s → old version back within 2 min. Block the rollback → developer notified.
-- **QA measures:** decision ≤ 10 min (QA-PE-01); 5 pushes in 1 min → 5 correct records, each ≤ 15 min (QA-SC-01); no API key in any log/record (QA-PR-01); Claude down → all 5 runs still get decisions with ≤ 30 s extra delay (QA-AV-01); 4 of 5 test users can name the deny cause from the PR comment within 2 min (QA-US-01, manual).
+- **QA measures:** decision ≤ 10 min (QA-PE-01); 5 pushes in 1 min → 5 correct records, each ≤ 15 min (QA-SC-01); no API key in any log/record (QA-PR-01); Claude down → all 5 runs still get decisions with ≤ 30 s extra delay (QA-AV-01); 4 of 5 test users can name the deny cause from the PR comment within 2 min (QA-US-01, manual; §11 item 14).
 
 All timers come from `policy.yaml` `timers` / `config.py` so tests can shorten them.
 
@@ -378,4 +386,5 @@ All timers come from `policy.yaml` `timers` / `config.py` so tests can shorten t
 - Every new rule or agent behavior gets a unit test that names the FR it covers.
 - Never commit `.env`, API keys, or `evidence.db`. `CONTROL_API_TOKEN` is a GitHub secret in the private app repo. `OPENROUTER_API_KEY` lives only in the host's `.env`, because the Control API is what calls the model. GitHub provides `GITHUB_TOKEN` to each job by itself, and does not allow a secret with a name that starts with `GITHUB_`. This public repo holds no secrets.
 - Each change goes on a branch and is reviewed by the other teammate (process constraint from the Requirements doc).
+- Who does what (decided 11/16): A. Hasenbein does everything that touches the team host or the app repo (`pipeline.yml`, `approve.yml`, `install_daemon.sh`, moving the host's pin, the Phase 8 runs). V. Dadi does the timeout sweeper (Phase 5) and the Claude module (Phase 7), which need neither.
 - Out of scope: production deploys, non-Python languages, container image scanning, Kubernetes, and real user data.
