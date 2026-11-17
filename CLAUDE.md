@@ -48,7 +48,7 @@ Developer ──push/PR──▶ GitHub (private app repo, Actions: pipeline.yml
 │                                                   ▼   public repo + policy.yaml)│
 │                                  LangGraph orchestrator (+ SQLite checkpointer) │
 │                                     │ agents ──▶ tools adapters ──▶ docker/pytest/bandit/pip-audit
-│                                     │ llm ──HTTPS──▶ OpenRouter ──▶ Claude      │
+│                                     │ llm ──HTTPS──▶ Claude API                 │
 │                                     │ evidence ──▶ SQLite (evidence.db)         │
 │                                     │ notifications ──HTTPS──▶ GitHub REST      │
 │                                     ▼                                           │
@@ -62,7 +62,7 @@ Developer ──push/PR──▶ GitHub (private app repo, Actions: pipeline.yml
   - **The server's address, login and hostname never go in this repo**, which is public. Keep them in the gitignored `.env` or your SSH config.
   - The distro stays up through `instanceIdleTimeout=-1` in the server's `.wslconfig` and a logon task that starts it. Docker starts with it through systemd.
   - **The self-hosted runner is on that server too** (installed 11/15 by `scripts/install_runner.sh`). It sits in `/home/devsecops/actions-runner` inside the `devsecops` distro, runs as the `devsecops` user under a systemd service named `actions.runner.<owner>-<app-repo>.team-host`, and starts with the distro. It is registered to the private app repo only, under the name `team-host` with the labels `self-hosted, Linux, X64, devsecops-host`. `pipeline.yml` should use `runs-on: [self-hosted, devsecops-host]`.
-  - **The host's settings and secrets are in `.env` in the host's checkout** (gitignored, mode 600): `DEVSECOPS_APP_REPO`, `CONTROL_API_TOKEN`, and later `OPENROUTER_API_KEY` (§10) and `GITHUB_TOKEN` for the notifier. `CONTROL_API_TOKEN` has the same value as the app repo's Actions secret of that name. The checkout is pinned by detaching it at a commit (`git checkout --detach <commit>`).
+  - **The host's settings and secrets are in `.env` in the host's checkout** (gitignored, mode 600): `DEVSECOPS_APP_REPO`, `CONTROL_API_TOKEN`, and later `ANTHROPIC_API_KEY` (§10) and `GITHUB_TOKEN` for the notifier. `CONTROL_API_TOKEN` has the same value as the app repo's Actions secret of that name. The checkout is pinned by detaching it at a commit (`git checkout --detach <commit>`).
 - **The Control API is a long-running daemon on the host** (systemd/launchd or `uvicorn` in tmux). It is **not** started per Actions job. Escalated runs can stay paused for up to 24 h, so pipeline state must persist across process restarts. Use the LangGraph SQLite checkpointer plus an `approvals` table with a `deadline_at` column.
 - **The GitHub workflow is a thin trigger.** It calls `POST /runs` with the commit info, then polls `GET /runs/{id}` until a decision exists and exits non-zero on DENY. Deploy + monitoring (5 min) continue asynchronously after the decision is posted.
 - **There are two different FastAPI apps.** Keep them in separate directories with separate dependencies.
@@ -329,14 +329,13 @@ Each phase must meet its exit criterion before the next phase starts. Phases 1�
 
 ## 10. LLM usage (`devsecops/llm/claude_client.py`)
 
-- **Provider (decided 11/16): Claude models are called through OpenRouter, not through Anthropic's API directly.** The key is `OPENROUTER_API_KEY` in the host's `.env`. This project has no `ANTHROPIC_API_KEY`.
-- SDK: still the official `anthropic` Python package, pointed at OpenRouter's Anthropic-compatible Messages endpoint (`POST https://openrouter.ai/api/v1/messages`). The base URL comes from `CLAUDE_BASE_URL`, default `https://openrouter.ai/api` (the SDK adds `/v1/messages` itself). Pass the key as the bearer token (`auth_token=`), which is how OpenRouter's own Claude Code guide sends it. **Not yet tried against a live request:** confirm the base URL and the auth argument with one real call at the start of Phase 7.
-- Model comes from an env var: `CLAUDE_MODEL`, default `anthropic/claude-opus-5.5`. OpenRouter's model names differ from Anthropic's: they start with `anthropic/` and write the version with a dot. The budget is capped at $25 for the semester, so the team may set a cheaper model (e.g. `anthropic/claude-haiku-5.5`) in `.env`. Don't hardcode the model ID.
-- Use one call per run, to write the reason only. Input: the frozen outcome, matched rules, top findings, and the redacted diff summary. Output: a short plain-text reason. Use `output_config={"effort": "low"}` and small `max_tokens` (~1024). Thinking can't be disabled on Opus 5.5; lowering effort is the control. Whether OpenRouter passes `output_config` through is also unconfirmed; check it in the same Phase 7 call and drop the argument if OpenRouter rejects it.
-- Use the SDK's error classes (`anthropic.APIConnectionError`, `RateLimitError`, `APIStatusError`). Set `max_retries=0` on the client and do our own 3 retries inside the 30 s budget. After that, fall back to a template reason and set `reason_source="template"`. OpenRouter adds failures of its own, such as HTTP 402 when the account is out of credits. They arrive as `APIStatusError` and get the same template fallback.
+- **Provider: Anthropic's API, called directly**, as the design PDFs assume. The key is `ANTHROPIC_API_KEY` in the host's `.env`. (On 11/16 the plan briefly moved to OpenRouter; that was reversed because the team has a paid Anthropic key. See §11 item 11.)
+- SDK: the official `anthropic` Python package. Model comes from an env var: `CLAUDE_MODEL`, default `claude-opus-5-5`. The budget is capped at $25 for the semester, so the team may set a cheaper model (e.g. `claude-haiku-5-5`) in `.env`. Don't hardcode the model ID.
+- Use one call per run, to write the reason only. Input: the frozen outcome, matched rules, top findings, and the redacted diff summary. Output: a short plain-text reason. Use `output_config={"effort": "low"}` and small `max_tokens` (~1024). Thinking can't be disabled on Opus 5.5; lowering effort is the control.
+- Use the SDK's error classes (`anthropic.APIConnectionError`, `RateLimitError`, `APIStatusError`). Set `max_retries=0` on the client and do our own 3 retries inside the 30 s budget. After that, fall back to a template reason and set `reason_source="template"`.
 - Check `stop_reason == "refusal"` and fall back to the template in that case.
 - Treat the diff as untrusted. Put it in a clearly delimited user block and tell the model it is data. The outcome is already fixed, so injection can at worst garble the reason text.
-- Before writing this module, invoke the `claude-api` skill for current SDK usage, and read OpenRouter's "Anthropic Messages" API reference for what it supports. Don't write SDK calls from memory.
+- Before writing this module, invoke the `claude-api` skill for current SDK usage. Don't write SDK calls from memory.
 
 ---
 
@@ -352,9 +351,9 @@ Each phase must meet its exit criterion before the next phase starts. Phases 1�
 | 6 | `DockerClient` vs `DockerAdapter`; `RuleEngine` vs `PolicySet.evaluate()`. | `DockerClient`; `RuleEngine` evaluates, `PolicySet` holds data. |
 | 7 | How the reviewer is notified within 1 min. | A GitHub PR comment / commit status mentioning the reviewers, with a link to the approval endpoint. A small CLI (`scripts/approve.py`) wraps `POST /runs/approval`. |
 | 8 | Append-only on SQLite can't stop a host admin. | Application-level append-only + triggers + hash chain + restricted file permissions (as FINAL states). Document this limitation in the report. |
-| 9 | What gets sent to Claude. | Only the diff and findings, after `redact.py` strips anything that looks like a key/token/password. Never send env values or full files. The request passes through OpenRouter on its way to Claude (#11), so the report must name both as recipients. |
+| 9 | What gets sent to Claude. | Only the diff and findings, after `redact.py` strips anything that looks like a key/token/password. Never send env values or full files. |
 | 10 | Self-hosted runner vs. public repo. | **Decided 11/15: two repos** (§2). This repo is public; the app, `pipeline.yml` and the runner belong to a private app repo. |
-| 11 | Which API serves the Claude models. The design PDFs assume Anthropic's API. | **Decided 11/16: OpenRouter** (§10), still calling Claude models. The final report must say so. |
+| 11 | Which API serves the Claude models. | **Anthropic's API directly** (§10), as the design PDFs assume. OpenRouter was chosen on 11/16 and then dropped, because the team has a paid Anthropic key. The redacted diff and findings go to Anthropic only. |
 
 ---
 
@@ -373,6 +372,6 @@ All timers come from `policy.yaml` `timers` / `config.py` so tests can shorten t
 
 - Python 3.11+, type hints, Pydantic v2, `ruff` + `pytest`. Keep the agents thin and put logic in `policy/` and `tools/`.
 - Every new rule or agent behavior gets a unit test that names the FR it covers.
-- Never commit `.env`, API keys, or `evidence.db`. `CONTROL_API_TOKEN` is a GitHub secret in the private app repo. `OPENROUTER_API_KEY` lives only in the host's `.env`, because the Control API is what calls the model. GitHub provides `GITHUB_TOKEN` to each job by itself, and does not allow a secret with a name that starts with `GITHUB_`. This public repo holds no secrets.
+- Never commit `.env`, API keys, or `evidence.db`. `CONTROL_API_TOKEN` is a GitHub secret in the private app repo. `ANTHROPIC_API_KEY` lives only in the host's `.env`, because the Control API is what calls the model. GitHub provides `GITHUB_TOKEN` to each job by itself, and does not allow a secret with a name that starts with `GITHUB_`. This public repo holds no secrets.
 - Each change goes on a branch and is reviewed by the other teammate (process constraint from the Requirements doc).
 - Out of scope: production deploys, non-Python languages, container image scanning, Kubernetes, and real user data.

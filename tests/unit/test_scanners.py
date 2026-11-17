@@ -246,14 +246,14 @@ def test_fr11_real_scanner_output_leads_to_deny(policy):
 
 
 def test_qa_pr_01_tools_do_not_see_pipeline_secrets(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test-value")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-value")
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test_value")
     monkeypatch.setenv("CONTROL_API_TOKEN", "control-test-value")
     monkeypatch.setenv("DB_PASSWORD", "pw-test-value")
     monkeypatch.setenv("HARMLESS_SETTING", "visible")
 
     env = scrubbed_env({"COVERAGE_FILE": "/tmp/x"})
-    assert "OPENROUTER_API_KEY" not in env
+    assert "ANTHROPIC_API_KEY" not in env
     assert "GITHUB_TOKEN" not in env
     assert "CONTROL_API_TOKEN" not in env
     assert "DB_PASSWORD" not in env
