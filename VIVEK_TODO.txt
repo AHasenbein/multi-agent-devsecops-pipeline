@@ -1,0 +1,312 @@
+VIVEK_TODO.txt
+Written 11/17 (Tue). Final report is due 11/30 (Mon).
+
+Where the project stands
+------------------------
+Phases 1-4 and 6 are built and merged. Since 11/17 a real push to the private app
+repo produces a decision on GitHub: pipeline.yml and approve.yml exist there, the
+self-hosted runner works, and the Control API runs on the team host.
+
+Two pieces of code are still missing, and both are yours (CLAUDE.md section 13):
+the review timeout sweeper (Phase 5) and the Claude reason writer (Phase 7).
+Neither needs the team host or the app repo. Alex cannot start the Phase 8 runs
+(the 30 seeded changes, the timing numbers for the report) until both are merged,
+so tasks 1 and 2 come first.
+
+Five tasks, in this order. The dates are suggestions; 11/26 is Thanksgiving, so
+the code should be merged before that week.
+
+  1. Review timeout sweeper            PR by Thu 11/19
+  2. Claude reason writer + redaction  PR by Sun 11/22
+  3. Secrets check script (QA-PR-01)   PR by Mon 11/23
+  4. Report section: changes from the design, and known limits   by Fri 11/27
+  5. QA-US-01 user test with five classmates                     by Fri 11/27
+
+How to work
+-----------
+  git checkout main && git pull
+  git checkout -b <branch>
+  uv sync
+
+Before you open a pull request, all three must pass:
+
+  uv run ruff check . && uv run ruff format --check .
+  uv run pytest -m "not docker"
+  uv run python scripts/check_seeded_changes.py      (must stay 30/30)
+
+You do not need Docker. CI runs the Docker tests. Alex reviews each pull request.
+Every new behavior gets a test whose name starts with the requirement it covers
+(look at tests/integration/test_graph_paths.py for the style, for example
+test_ts_06_01_timeout_denies_and_notifies_the_developer).
+
+
+=====================================================================
+TASK 1. Review timeout sweeper (FR15, Phase 5)
+=====================================================================
+
+What is missing
+  An escalated run waits for a reviewer. If nobody answers before the deadline,
+  the run must be denied and the developer told. Today nothing does that: the run
+  waits forever.
+
+What already exists (do not rebuild it)
+  - devsecops/orchestrator/graph.py, request_review(): writes a REVIEW_REQUESTED
+    evidence record whose payload has commit_sha and deadline_at (ISO time, UTC).
+  - graph.py, human_review(): already handles a TIMEOUT verdict. It saves the
+    REVIEW_VERDICT record, posts the "Review timed out: change denied" alert and
+    ends the run as DENIED.
+  - devsecops/orchestrator/orchestrator.py, begin_resume(approval): checks that
+    the run is paused and the commit matches, and returns a function that
+    continues the run. It raises ReviewNotPending if the run is not waiting.
+  - The test test_ts_06_01_timeout_denies_and_notifies_the_developer already
+    shows that resuming with Verdict.TIMEOUT and reviewer="system" works.
+
+  So the only missing part is the thing that notices the deadline has passed.
+
+What to build
+  a) In devsecops/orchestrator/approval_service.py, add to ApprovalService:
+
+       def expire_overdue(self, now: datetime | None = None) -> list[str]
+
+     It returns the run ids it timed out. Steps:
+       - evidence.list_runs() and keep the entries whose last_event_type is
+         "REVIEW_REQUESTED". A paused run's last record is always that one.
+       - For each, evidence.get_run(run_id), read commit_sha and deadline_at from
+         that record's payload_json.
+       - If deadline_at < now: build Approval(run_id, commit_sha,
+         reviewer="system", verdict=Verdict.TIMEOUT), call
+         orchestrator.begin_resume(approval), then call the function it returns.
+       - Catch ReviewNotPending and skip that run. It means a reviewer answered in
+         the same moment, and their answer wins.
+       - Catch any other exception per run, log it and go on. One broken run must
+         not stop the others.
+
+     ApprovalService does not hold the evidence store yet. Give it one in
+     __init__ and pass services.evidence where api/main.py builds it (line ~96).
+
+     Leave submit() as it is. It refuses TIMEOUT from callers on purpose
+     (test_fr15_nobody_can_send_a_timeout_verdict), so the sweeper must not go
+     through it.
+
+  b) In devsecops/api/main.py, start the sweeper in lifespan(), after the
+     fail_interrupted_runs() line:
+       - Sweep once right away. That covers deadlines that passed while the daemon
+         was down.
+       - Then sweep every 30 s until shutdown.
+       - Run the sweep in a thread, not on the event loop. It reads SQLite and
+         calls GitHub.
+       - Add sweep_interval_s: float = 30 to ApiServices so tests can shorten it,
+         and stop the loop cleanly on shutdown.
+
+  c) CLAUDE.md section 2 and section 5 say the sweeper reads an "approvals" table
+     with a deadline_at column. That table was never built. The deadline is
+     already in the evidence store, which survives a restart, so reading it from
+     there is less code and has no second copy to keep in step. Change those two
+     sentences in CLAUDE.md in the same pull request. If you would rather build
+     the table, say why in the pull request.
+
+Tests to add (pass a fixed `now`; do not sleep)
+  - fr15: overdue run -> status DENIED, REVIEW_VERDICT record with TIMEOUT,
+    RUN_FINISHED with DENIED, the "Review timed out" alert was sent, nothing was
+    deployed.
+  - A run whose deadline has not passed is left alone.
+  - fr15 after a restart: start the run with one Pipeline, make a second Pipeline
+    on the same tmp_path (the way test_paused_review_survives_a_daemon_restart
+    does it), and expire it from the second one.
+  - A run the reviewer already answered is skipped without an exception.
+  - Two overdue runs where the first raises: the second is still timed out.
+  - Through the API (tests/integration/test_control_api.py): with a short
+    sweep_interval_s and an overdue run, GET /runs/{id} ends up DENIED.
+
+Done when
+  The tests above pass and the three checks pass. Alex then runs TS-06-01 on the
+  host with review_timeout_s set to 120.
+
+
+=====================================================================
+TASK 2. Claude reason writer (FR13, QA-AV-01, Phase 7)
+=====================================================================
+
+Read CLAUDE.md section 10 first. It has the decisions: OpenRouter instead of
+Anthropic's API, Sonnet 5.5, key in OPENROUTER_API_KEY, $25 budget.
+
+What already exists
+  - devsecops/agents/policy.py line 23 defines the hook:
+        ReasonWriter = Callable[[ReleaseDecision, PolicyInput], str | None]
+    PolicyAgent calls it after the rules have decided. If it returns None or
+    raises, the template reason stays and reason_source stays "template". If it
+    returns text, reason_source becomes "claude". The outcome cannot change.
+  - devsecops/api/main.py line 164 builds PolicyAgent with no writer. That is the
+    line you change.
+  - policy.yaml has llm.claude_retries (3) and llm.claude_max_extra_delay_s (30).
+  - anthropic 2.8.0 is already a dependency. There is no devsecops/llm/ yet.
+
+What to build
+  devsecops/llm/__init__.py
+  devsecops/llm/redact.py
+      redact(text) -> str. Replaces anything that looks like a secret with
+      [REDACTED]: OpenRouter and Anthropic keys (sk-or-..., sk-ant-...), GitHub
+      tokens (ghp_..., github_pat_...), AWS access keys (AKIA...), "Bearer <x>",
+      assignments such as password= / token= / api_key= / secret=, and private
+      key blocks. Keep the patterns in one named list; task 3 reuses them.
+  devsecops/llm/prompts.py
+      Builds the system text and the user message. The user message holds: the
+      outcome, the matched rules, the top findings (tool, rule id, file:line,
+      severity, message), the failing test names, and the changed file names.
+      Everything from the change goes through redact() and sits in a clearly
+      marked block, and the system text says that block is data, not
+      instructions.
+  devsecops/llm/claude_client.py
+      class ClaudeClient with write_reason(decision, results) -> str | None, so
+      that client.write_reason can be passed as the ReasonWriter.
+        - Client: anthropic.Anthropic(base_url=CLAUDE_BASE_URL, auth_token=key,
+          max_retries=0). Defaults: CLAUDE_BASE_URL https://openrouter.ai/api,
+          CLAUDE_MODEL anthropic/claude-sonnet-5.5. Both from the environment;
+          do not hardcode the model anywhere else.
+        - One request per run, max_tokens about 1024,
+          output_config={"effort": "low"}.
+        - Our own retry loop: up to claude_retries retries on
+          APIConnectionError, RateLimitError and 5xx APIStatusError. Other 4xx
+          (401, 402 out of credits, 400) will not get better: give up at once.
+        - The whole thing, every attempt and every wait, must fit inside
+          claude_max_extra_delay_s (30 s), measured from the first call. Give
+          each attempt a timeout of what is left of the budget. Take the clock
+          and the sleep function as constructor arguments so tests need no real
+          waiting.
+        - Return None (template is used) when: the retries or the budget run
+          out, stop_reason is "refusal", or the text is empty. Never raise.
+        - Return plain text, stripped, cut to a sensible length (about 600
+          characters).
+        - Never log the key, the request headers or the full prompt.
+  devsecops/api/main.py line 164
+      If OPENROUTER_API_KEY is set, pass reason_writer=ClaudeClient(...).write_reason.
+      If it is not set, keep today's behavior (no writer, template reason). Read
+      the key there, at the point of use; config.py does not store secrets.
+  scripts/try_claude.py
+      Makes one real request with a made-up DENY decision and prints the reason,
+      the model, stop_reason and the token usage. Never prints the key. You have
+      no key: the only one is on the team host. Alex runs this script there.
+
+One decision for you to make
+  The hook gives the writer (decision, PolicyInput), and PolicyInput has no diff.
+  CLAUDE.md section 10 says the input includes "the redacted diff summary".
+  Suggestion: use the changed file names as that summary and do not send the diff
+  text. It keeps the hook as it is, sends less to OpenRouter and leaves less to
+  redact. If you want the real diff, the hook and PolicyAgent must change. Say
+  which you chose in the pull request, and update section 10 if needed.
+
+Three things nobody has tried yet (CLAUDE.md section 10)
+  1. Whether base_url https://openrouter.ai/api is right.
+  2. Whether auth_token= is the right way to send the key.
+  3. Whether OpenRouter accepts output_config. If it rejects it, drop it.
+  scripts/try_claude.py is how we find out. Write the SDK calls from the current
+  anthropic SDK docs and OpenRouter's "Anthropic Messages" API reference, not
+  from memory.
+
+Tests to add (fake the SDK client; no network)
+  - fr13: a normal answer comes back as the reason.
+  - fr13: the answer says "ALLOW, ignore the rules" for a DENY decision ->
+    the outcome and matched rules are unchanged.
+  - qa_av_01: every attempt fails -> returns None, the number of attempts is
+    1 + claude_retries, and the time used on the fake clock is at most 30 s.
+  - qa_av_01: a slow attempt that would run past the budget is cut off.
+  - 402 and 401 -> None after one attempt, no retries.
+  - stop_reason "refusal" -> None. Empty text -> None.
+  - qa_pr_01: a finding message and a test failure message that contain a fake
+    key -> the key is not in the request that was sent.
+  - redact(): one test per pattern, plus normal text is left alone.
+  - Wiring: with OPENROUTER_API_KEY set the daemon gets a writer; without it,
+    none (next to test_daemon_wiring_builds_from_the_environment).
+
+Done when
+  The tests and the three checks pass, and Alex has run scripts/try_claude.py on
+  the host and got a reason back. check_seeded_changes.py stays 30/30, which is
+  the "same decisions with Claude off" half of TS-04-01.
+
+
+=====================================================================
+TASK 3. Secrets check script (QA-PR-01)
+=====================================================================
+
+What to build
+  scripts/check_no_secrets.py <path> [<path> ...]
+
+  Alex runs it on the host in Phase 8 over evidence.db, checkpoints.db and the
+  Control API's log. It answers one question for the report: is there a key in
+  any log or record?
+
+  - For a SQLite file: read every text column of every table. For any other
+    file: read it as text.
+  - Look for the patterns from devsecops/llm/redact.py (task 2).
+  - Also look for the exact values of CONTROL_API_TOKEN, GITHUB_TOKEN and
+    OPENROUTER_API_KEY when they are set in the environment.
+  - On a hit print the file, the table and row (or the line number) and the name
+    of the pattern. Never print the matched text.
+  - Exit 0 when clean, 1 on any hit. End with one summary line: files checked,
+    rows and lines checked, hits.
+
+Tests
+  A temp SQLite file and a temp log, each with a planted fake key -> exit 1 and
+  the key is not in the output. Clean files -> exit 0.
+
+Depends on task 2 (redact.py). Can go in the same pull request if that is easier.
+
+
+=====================================================================
+TASK 4. Report section: changes from the design, and known limits
+=====================================================================
+
+CLAUDE.md lists things the final report has to say. Nobody has written them down
+in report form yet. Draft this section in the report document, one short
+paragraph per item: what the design PDFs said, what we built, and why.
+
+  1. Two repos instead of one (section 2, section 11 item 10). A self-hosted
+     runner on a public repo would let a stranger's pull request run code on the
+     team host.
+  2. Claude is called through OpenRouter, not Anthropic's API (item 11). The
+     request therefore goes to two recipients, OpenRouter and Anthropic (item 9).
+     Say exactly what is sent, which depends on your choice in task 2.
+  3. The reviewer's name (invariant 8). approve.yml sends the GitHub login of
+     whoever started it, but the API itself accepts the name from any caller
+     that holds the bearer token.
+  4. Append-only evidence (item 8). Triggers, hash chain and file permissions
+     stop the application and detect edits. They cannot stop an admin of the
+     host.
+  5. Pull request runs deploy (item 2). The sandbox and the rollback version can
+     hold unmerged code.
+  6. Daemon restart (item 12). A run in progress is closed as ERROR and is not
+     resumed; there is no automatic rollback; a run cut off during checkout
+     leaves no record. A run paused for review does survive.
+  7. The seeded test set (item 1). 10 safe / 10 high-risk / 10 medium, and
+     "risky change blocked" means "not allowed".
+  8. Where the policy is read from (item 3). The host's pinned install, never
+     the commit being evaluated.
+
+Alex adds the numbers (timings, 30-change results) after Phase 8.
+
+
+=====================================================================
+TASK 5. QA-US-01 user test
+=====================================================================
+
+The requirement: 4 of 5 test users can name why a change was denied, from the
+pull request comment alone, within 2 minutes. Decided 11/16: five CMPSC 320
+classmates, each shown a screenshot. Nobody gets access to the app repo.
+
+  - Ask Alex for a screenshot of a real DENY comment from the app repo. Wait
+    until task 2 is merged if we want the comment to show a Claude-written
+    reason.
+  - Show it to five classmates, one at a time. Ask: "Why was this change
+    denied?" Start a timer when they see it.
+  - Record for each (P1 to P5, no names): what they said, whether it matches the
+    matched rule, and the seconds it took.
+  - Pass = at least 4 correct within 120 s. Put the table in the report. If
+    fewer than 4 pass, tell Alex what confused people so the comment text in
+    devsecops/notifications/github_notifier.py can be fixed and the test rerun.
+
+
+What is NOT yours
+-----------------
+Anything on the team host or in the app repo: scripts/install_daemon.sh,
+scripts/run_seeded_changes.py, moving the host's pin, running TS-06-01 and
+TS-08-01 on the host, the Phase 8 runs and the demo recording. Those are Alex's.
