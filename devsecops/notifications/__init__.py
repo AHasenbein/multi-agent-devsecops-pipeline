@@ -3,5 +3,6 @@ FR18). ``Notifier`` is the interface the orchestrator calls; the GitHub implemen
 lives in ``github_notifier.py``."""
 
 from devsecops.notifications.base import CommitState, Notifier, NullNotifier
+from devsecops.notifications.github_notifier import GitHubError, GitHubNotifier
 
-__all__ = ["CommitState", "Notifier", "NullNotifier"]
+__all__ = ["CommitState", "GitHubError", "GitHubNotifier", "Notifier", "NullNotifier"]

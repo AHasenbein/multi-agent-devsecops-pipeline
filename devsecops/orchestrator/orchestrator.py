@@ -3,6 +3,7 @@
 import logging
 import sqlite3
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -55,8 +56,34 @@ class Orchestrator:
         state = initial_state(run, str(workspace), diff, changed_files)
         return self._invoke(run.run_id, state)
 
+    def record_failed_start(self, run: PipelineRun, errors: list[str]) -> None:
+        """A run was accepted but could not begin (for example its commit could not be
+        checked out). It still gets a complete record and the developer is told (FR2, FR3)."""
+        self._deps.evidence.append(run.run_id, EventType.RUN_STARTED, run)
+        self._deps.evidence.append(
+            run.run_id, EventType.AGENT_ERROR, {"agent": "orchestrator", "errors": errors}
+        )
+        self._deps.evidence.append(
+            run.run_id, EventType.RUN_FINISHED, {"status": RunStatus.ERROR.value, "outcome": None}
+        )
+        for method, args in (
+            ("alert", (run, "Pipeline run could not start", "\n".join(f"- {e}" for e in errors))),
+            ("set_status", (run, "error", f"ERROR (run {run.run_id})")),
+        ):
+            try:
+                getattr(self._deps.notifier, method)(*args)
+            except Exception:  # noqa: BLE001
+                log.exception("notifier.%s failed", method)
+
     def resume(self, approval: Approval) -> dict[str, Any]:
         """Continue a run paused in ESCALATE with the reviewer's verdict (or TIMEOUT).
+        Blocks until the run finishes, which includes deploy and monitoring."""
+        return self.begin_resume(approval)()
+
+    def begin_resume(self, approval: Approval) -> Callable[[], dict[str, Any]]:
+        """Check the approval and claim the run. The returned function continues the run
+        and must be called exactly once; the API calls it in a background thread, after it
+        has answered the reviewer.
 
         Checking that the reviewer is allowed to approve is the ApprovalService's job;
         this checks that the run is really waiting and that the commit matches."""
@@ -73,11 +100,15 @@ class Orchestrator:
             if snapshot.values["run"]["commit_sha"] != approval.commit_sha:
                 raise ReviewNotPending(f"run {run_id} is for a different commit than the approval")
             self._resuming.add(run_id)
-        try:
-            return self._invoke(run_id, Command(resume=approval.model_dump(mode="json")))
-        finally:
-            with self._resume_guard:
-                self._resuming.discard(run_id)
+
+        def continue_run() -> dict[str, Any]:
+            try:
+                return self._invoke(run_id, Command(resume=approval.model_dump(mode="json")))
+            finally:
+                with self._resume_guard:
+                    self._resuming.discard(run_id)
+
+        return continue_run
 
     def get_state(self, run_id: str) -> dict[str, Any] | None:
         values = self._graph.get_state(self._config(run_id)).values

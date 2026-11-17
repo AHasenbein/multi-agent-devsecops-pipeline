@@ -24,12 +24,14 @@ def test_settings_come_from_the_environment():
             "DEVSECOPS_APP_DIR": "services/notes/",
             "DEVSECOPS_APP_IMAGE": "notes-app",
             "DEVSECOPS_POLICY_PATH": "/etc/devsecops/policy.yaml",
+            "DEVSECOPS_STATE_DIR": "/var/lib/devsecops",
         }
     )
     assert settings.app_repo == "someone/notes-app"
     assert settings.app_dir == "services/notes"
     assert settings.app_image == "notes-app"
     assert settings.policy_path == Path("/etc/devsecops/policy.yaml")
+    assert settings.state_dir == Path("/var/lib/devsecops")
 
 
 def test_app_at_the_repo_root():

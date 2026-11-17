@@ -95,7 +95,7 @@ multi-agent-devsecops-pipeline/
 │   │   ├── graph.py              # StateGraph build + conditional edges
 │   │   ├── state.py              # PipelineState
 │   │   ├── orchestrator.py       # Orchestrator.start_run(commit), resume(run_id, verdict)
-│   │   ├── approval_service.py   # notify, record verdict, timeout sweeper
+│   │   ├── approval_service.py   # reviewer authorization (done); timeout sweeper (Phase 5)
 │   │   ├── setup_validator.py    # checks docker, secrets, policy.yaml
 │   │   └── locks.py              # deploy lock
 │   ├── agents/                   # FR4–FR18
@@ -103,6 +103,7 @@ multi-agent-devsecops-pipeline/
 │   │   ├── build.py  test.py  security.py  policy.py  deployment.py  monitoring.py
 │   ├── tools/                    # FR4, FR6, FR7, FR17 — one adapter per external tool
 │   │   ├── docker_client.py      # build, run, stop, start, rename, rollback
+│   │   ├── git_workspace.py      # per-run checkout of the evaluated commit, its diff and changed files
 │   │   ├── pytest_runner.py
 │   │   ├── bandit_scanner.py
 │   │   ├── pip_audit_scanner.py
@@ -266,14 +267,16 @@ The loader validates this file with Pydantic. An invalid policy fails `SetupVali
 
 | Method & path | Purpose | FR |
 |---|---|---|
-| `POST /runs` | body `{commit_sha, branch, author, event, pr_number?}` → `202 {run_id}`; runs `SetupValidator` first | FR1–FR3 |
+| `POST /runs` | body `{commit_sha, base_sha?, branch, author, event, pr_number?}` → `202 {run_id}`; runs `SetupValidator` first. `commit_sha` is the full 40-character id. `base_sha` is what the change is compared with (`github.event.before` for a push, the base branch's commit for a pull request); without it only the commit's own parent is used, which misses earlier commits of a multi-commit push | FR1–FR3 |
 | `GET /runs` | list `RunSummary` | FR20 |
-| `GET /runs/{id}` | `RunView`: status, decision, findings, evidence entries, `verify_chain()` result, `SandboxStatus` (live, or last recorded if the sandbox is down) | FR19, FR20, UC-09 |
+| `GET /runs/{id}` | `RunView`: status, decision, findings, evidence entries, `verify_chain()` result, `SandboxStatus` (live, or last recorded if the sandbox is down). `decided` turns true once a decision exists or the run ended without one; the workflow polls for it | FR19, FR20, UC-09 |
 | `POST /runs/approval` | body `{run_id, commit_sha, reviewer, verdict}` → 200, or 403 if the reviewer isn't listed or run/commit don't match a paused run | FR14 |
 | `GET /policies` | active PolicySet as JSON | — |
 | `GET /health` | Control API health | — |
 
-Protect the API with a shared bearer token stored as a GitHub secret + host env var, and bind it to localhost unless reviewers need remote access.
+Protect the API with a shared bearer token stored as a GitHub secret + host env var, and bind it to localhost unless reviewers need remote access. Every route except `GET /health` needs the token.
+
+The Control API never takes a checkout path from the request. It fetches the commit from the app repo itself into `DEVSECOPS_STATE_DIR/workspaces/<run_id>` (`tools/git_workspace.py`) and deletes that checkout when the run ends or pauses.
 
 ---
 

@@ -7,6 +7,7 @@ so every adapter can be replaced with a fake in tests.
 from devsecops.tools.bandit_scanner import BanditScanner
 from devsecops.tools.base import CommandResult, ScanOutput, ToolError, run_command
 from devsecops.tools.docker_client import DockerClient, DockerError
+from devsecops.tools.git_workspace import Checkout, GitWorkspaces, WorkspaceError
 from devsecops.tools.health_checker import HealthChecker
 from devsecops.tools.injection_detector import InjectionDetector
 from devsecops.tools.pip_audit_scanner import PipAuditScanner
@@ -15,9 +16,11 @@ from devsecops.tools.sandbox import MonitorResult, Sandbox, watch_health
 
 __all__ = [
     "BanditScanner",
+    "Checkout",
     "CommandResult",
     "DockerClient",
     "DockerError",
+    "GitWorkspaces",
     "HealthChecker",
     "InjectionDetector",
     "MonitorResult",
@@ -26,6 +29,7 @@ __all__ = [
     "Sandbox",
     "ScanOutput",
     "ToolError",
+    "WorkspaceError",
     "run_command",
     "watch_health",
 ]
