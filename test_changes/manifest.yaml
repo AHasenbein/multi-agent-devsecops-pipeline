@@ -221,7 +221,7 @@ changes:
     expected: ESCALATE
     rules: [low_coverage]
     covers: [FR12]
-    description: Deletes sample_app/tests/test_main.py, the only test file. Coverage is 0%.
+    description: Deletes both test files, test_main.py and test_validation.py. Coverage is 0%.
 
   - id: E04
     patch: E04-csv-import-export-without-tests.patch
