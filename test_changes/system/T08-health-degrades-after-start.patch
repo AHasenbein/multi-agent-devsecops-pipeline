@@ -1,0 +1,29 @@
+diff --git a/sample_app/app/main.py b/sample_app/app/main.py
+index 6288157..627c061 100644
+--- a/sample_app/app/main.py
++++ b/sample_app/app/main.py
+@@ -1,11 +1,15 @@
+ """A small notes API. It exists to give the pipeline something real to evaluate."""
+ 
++import time
++
+ from fastapi import FastAPI, HTTPException, status
+ from pydantic import BaseModel, Field
+ 
+ from app import __version__
+ 
+ app = FastAPI(title="Sample App", version=__version__)
++_STARTED = time.monotonic()
++HEALTHY_FOR_S = 20  # warm-up window; the health check degrades after it
+ 
+ 
+ class NoteIn(BaseModel):
+@@ -50,6 +54,8 @@ store = NoteStore()
+ @app.get("/health")
+ def health() -> dict[str, str]:
+     """Polled by the Monitoring Agent every 10 seconds after a deploy (FR17)."""
++    if time.monotonic() - _STARTED > HEALTHY_FOR_S:
++        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="degraded")
+     return {"status": "ok", "version": __version__}
+ 
+ 
