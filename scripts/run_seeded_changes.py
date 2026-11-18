@@ -124,7 +124,10 @@ def parse_decision(body: str) -> Decision | None:
             rules.append(match.group(1))
     if not {"Decision", "Commit", "Run"} <= fields.keys():
         return None
-    source = "claude" if "written by Claude" in body else "template"
+    # Only our own footer line counts. The explanation is shown as an escaped quote
+    # ("> ..."), so text in it can never start a line with "_The decision".
+    footer = next((line for line in lines if line.startswith("_The decision comes from")), "")
+    source = "claude" if "written by Claude" in footer else "template"
     return Decision(fields["Decision"], fields["Commit"], fields["Run"], rules, source)
 
 

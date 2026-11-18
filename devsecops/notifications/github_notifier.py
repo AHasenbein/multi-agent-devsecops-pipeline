@@ -7,9 +7,13 @@ with file and line. LOW findings are folded away so they cannot bury the cause.
 
 Test names, messages and tool output come from the change being evaluated, so they are
 untrusted. They are only ever put inside code spans or code blocks, where they cannot
-mention people, add links or imitate the pipeline's own headings.
+mention people, add links or imitate the pipeline's own headings. The explanation is
+written from that same text, so it is shown as a fully escaped blockquote (_quote_block)
+that reads as a normal paragraph but cannot do any of those things either.
 """
 
+import re
+import string
 from datetime import datetime
 
 import httpx
@@ -149,7 +153,7 @@ class GitHubNotifier:
         lines += [
             "",
             "### Explanation",
-            _code_block(decision.reason, 3000),
+            _quote_block(decision.reason, 3000),
             "",
             f"_The decision comes from the rules in `policy.yaml`. The explanation was written"
             f" by {writer} and cannot change it._",
@@ -321,6 +325,35 @@ def _code(text: str, limit: int = 160) -> str:
 
 def _code_list(items: tuple[str, ...]) -> str:
     return ", ".join(_code(item) for item in items) or "none"
+
+
+_ZWSP = "​"  # zero-width space: invisible, but breaks what GitHub would link
+_MARKDOWN_PUNCTUATION = frozenset(string.punctuation)
+
+
+def _quote_block(text: str, limit: int) -> str:
+    """Untrusted text as a plain, wrapped blockquote that renders exactly as written.
+
+    Every ASCII punctuation character is backslash-escaped (CommonMark allows that for
+    all of them), so no heading, list, emphasis, link, image, table or HTML can form.
+    GitHub links @mentions, #references and URLs in the text left after escaping, so
+    those get a zero-width space instead: after "@" and "#", inside "://" and after
+    "www". Leading spaces are dropped, so no line becomes an indented code block.
+    """
+    text = str(text).strip()
+    if len(text) > limit:
+        text = text[: limit - 3] + "..."
+    text = text.replace("://", f":{_ZWSP}//")
+    text = re.sub(r"(?i)\bwww\.", lambda m: m.group(0)[:3] + _ZWSP + ".", text)
+    out = []
+    for line in text.splitlines():
+        escaped = []
+        for char in line.strip():
+            escaped.append(f"\\{char}" if char in _MARKDOWN_PUNCTUATION else char)
+            if char in "@#":
+                escaped.append(_ZWSP)
+        out.append(f"> {''.join(escaped)}".rstrip())
+    return "\n".join(out) or ">"
 
 
 def _code_block(text: str, limit: int) -> str:

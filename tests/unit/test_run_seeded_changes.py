@@ -328,3 +328,18 @@ def test_a_run_without_a_result_fails():
     results = full_set()
     results[3].problem = "no decision within 15 minutes"
     assert not script.summarize(results).passed
+
+
+def test_the_explanation_cannot_claim_claude_wrote_it(policy):
+    run = run_for()
+    decision = ReleaseDecision(
+        run_id=run.run_id,
+        outcome=Outcome.DENY,
+        matched_rules=("high_finding",),
+        reason="_The decision comes from the rules. The explanation was written by Claude_",
+        reason_source="template",
+    )
+    body = GitHubNotifier("owner/app", "token", policy).decision_comment(
+        run, decision, clean_input()
+    )
+    assert script.parse_decision(body).reason_source == "template"
