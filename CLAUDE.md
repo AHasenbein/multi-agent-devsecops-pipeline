@@ -364,7 +364,7 @@ Each phase must meet its exit criterion before the next phase starts. Phases 1�
 | 11 | Which API serves the Claude models. The design PDFs assume Anthropic's API. | **Decided 11/16: OpenRouter** (§10), still calling Claude models. The final report must say so. |
 | 12 | A run that is in progress when the daemon restarts. | **Decided 11/16:** it is not resumed. At start the daemon gives every unfinished run that is not paused for review a final ERROR record, an error commit status and an alert that tells the developer to push again (§5). If the run was deploying or being monitored, the alert says the sandbox was left unchecked; there is no automatic rollback. A run cut off before its first record (during the checkout) leaves no trace. |
 | 13 | Which Claude model writes the reasons. | **Decided 11/16: Sonnet 5.5** (`anthropic/claude-sonnet-5.5`) for every run (§10). |
-| 14 | Who the five test users for QA-US-01 are. | **Decided 11/16:** five CMPSC 320 classmates, each shown a screenshot of a real deny comment. Nobody gets access to the app repo for it. |
+| 14 | Who the five test users for QA-US-01 are. | ~~Decided 11/16: five CMPSC 320 classmates, each shown a screenshot of a real deny comment.~~ **Changed 11/18: the QA-US-01 user test is dropped.** It is not run and has no result. The final report must say so. The PR comment is still built for it (decision, matched rules, top findings with file:line). |
 | 15 | Grader access and the demo. | **Decided 11/16:** the grader gets read-only access to the app repo only if they ask. The demo is live, with a recording made once Phase 8 passes as the fallback. |
 
 ---
@@ -374,7 +374,7 @@ Each phase must meet its exit criterion before the next phase starts. Phases 1�
 - **TS-04-01 Risky change is denied:** push a failing-test change → DENY with the test name shown. Push a HIGH-finding change → DENY, nothing deployed. Repeat with Claude off → same decisions.
 - **TS-06-01 Reviewer decision:** escalated run, review timeout set to 120 s. Approve → deploys. Reject → stops and is saved. No answer → DENY after the timeout.
 - **TS-08-01 Failed deploy rolls back:** deploy a broken `/health` → 3 failed checks in about 30 s → old version back within 2 min. Block the rollback → developer notified.
-- **QA measures:** decision ≤ 10 min (QA-PE-01); 5 pushes in 1 min → 5 correct records, each ≤ 15 min (QA-SC-01); no API key in any log/record (QA-PR-01); Claude down → all 5 runs still get decisions with ≤ 30 s extra delay (QA-AV-01); 4 of 5 test users can name the deny cause from the PR comment within 2 min (QA-US-01, manual; §11 item 14).
+- **QA measures:** decision ≤ 10 min (QA-PE-01); 5 pushes in 1 min → 5 correct records, each ≤ 15 min (QA-SC-01); no API key in any log/record (QA-PR-01); Claude down → all 5 runs still get decisions with ≤ 30 s extra delay (QA-AV-01). QA-US-01 (4 of 5 test users name the deny cause within 2 min) is dropped and not measured (§11 item 14).
 
 All timers come from `policy.yaml` `timers` / `config.py` so tests can shorten them.
 
