@@ -6,6 +6,7 @@ The diff and the list of changed files come from the same checkout.
 """
 
 import base64
+import os
 import re
 import shutil
 from collections.abc import Mapping
@@ -79,6 +80,7 @@ class GitWorkspaces:
                         f"commit {commit_sha} was not found in the app repo" + self._detail(failed)
                     )
             self._git(path, "checkout", "-q", "--detach", commit_sha)
+            _make_readable(path)
 
             base = self._base(path, commit_sha, base_sha)
             diff = self._git(path, "diff", "--no-color", "--no-ext-diff", base, commit_sha).stdout
@@ -158,3 +160,24 @@ class GitWorkspaces:
         if self._token:  # before cutting, so a cut can never leave part of the token
             text = text.replace(self._token, "***").replace(self._basic(), "***")
         return f": {text[-300:]}" if text else ""
+
+
+def _make_readable(root: Path) -> None:
+    """Give the checked-out files the modes git would give them under umask 022.
+
+    The Control API runs with umask 077 (scripts/install_daemon.sh), so git creates the
+    work tree owner-only. ``docker build`` copies those modes into the image, and the app's
+    non-root user then cannot read its own code: the container exits at start. The
+    checkout stays private all the same, because it sits inside the owner-only state
+    directory. ``.git`` is left alone; it is not part of the build.
+    """
+    for current, subdirs, files in os.walk(root):
+        directory = Path(current)
+        if directory == root and ".git" in subdirs:
+            subdirs.remove(".git")
+        directory.chmod(0o755)
+        for name in files:
+            file = directory / name
+            if file.is_symlink():
+                continue
+            file.chmod(0o755 if file.stat().st_mode & 0o100 else 0o644)
