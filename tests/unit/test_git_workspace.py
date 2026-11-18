@@ -175,3 +175,24 @@ def test_qa_pr_01_token_is_not_on_the_command_line_and_not_in_errors(tmp_path):
         assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraHeader"
         assert env["GIT_CONFIG_VALUE_0"] == f"Authorization: Basic {encoded}"
         assert env["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_fr4_checkout_is_readable_by_the_image_user_under_the_daemons_umask(remote, workspaces):
+    """The daemon runs with umask 077. Docker copies the checkout's modes into the image,
+    where a non-root user runs the app, so the files must not be owner-only."""
+    remote.commit({"sample_app/app/__init__.py": "", "sample_app/run.sh": "#!/bin/sh\n"})
+    remote.git("update-index", "--chmod=+x", "sample_app/run.sh")
+    remote.git("commit", "-q", "-m", "executable")
+    sha = remote.git("rev-parse", "HEAD")
+
+    old = os.umask(0o077)
+    try:
+        checkout = workspaces.prepare("run-1", sha)
+    finally:
+        os.umask(old)
+
+    mode = lambda p: (checkout.path / p).stat().st_mode & 0o777  # noqa: E731
+    assert mode("sample_app") == 0o755
+    assert mode("sample_app/app") == 0o755
+    assert mode("sample_app/app/__init__.py") == 0o644
+    assert mode("sample_app/run.sh") == 0o755
