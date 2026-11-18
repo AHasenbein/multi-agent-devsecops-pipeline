@@ -8,16 +8,20 @@ It needs CONTROL_API_TOKEN, GITHUB_TOKEN and DEVSECOPS_APP_REPO in its environme
 route except GET /health asks for ``Authorization: Bearer <CONTROL_API_TOKEN>``.
 
 When it starts, it closes the runs that the previous process left unfinished as ERROR
-(CLAUDE.md §11 item 12). Runs paused for review are kept.
+(CLAUDE.md §11 item 12). Runs paused for review are kept. While it runs, a background
+thread denies the reviews whose deadline has passed (FR15).
 """
 
 import functools
 import hmac
+import logging
 import os
+import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -26,9 +30,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from devsecops.api.approvals import approvals_router
 from devsecops.api.runs import RunService, Workspaces, runs_router
 from devsecops.evidence import EvidenceStore
-from devsecops.models import HealthCheck, PolicySet
+from devsecops.models import HealthCheck, PolicySet, utc_now
 from devsecops.orchestrator.approval_service import ApprovalService
 from devsecops.orchestrator.orchestrator import Orchestrator
+
+log = logging.getLogger(__name__)
 
 Submit = Callable[[Callable[[], Any]], Any]
 
@@ -46,6 +52,34 @@ class ApiServices:
     sandbox_probe: Callable[[], HealthCheck]
     submit: Submit  # runs a function in the background
     shutdown: Callable[[], None] = lambda: None
+    sweep_interval_s: float = 30  # how often overdue reviews are timed out (FR15)
+    clock: Callable[[], datetime] = utc_now
+
+
+class ReviewSweeper:
+    """Times out overdue reviews (FR15) on a thread of its own: once at start, which
+    covers deadlines that passed while the daemon was down, then every interval."""
+
+    def __init__(self, service: ApprovalService, interval_s: float) -> None:
+        self._service = service
+        self._interval_s = interval_s
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, name="review-sweeper", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self._service.expire_overdue()
+            except Exception:  # noqa: BLE001 - the sweeper must outlive one bad sweep
+                log.exception("review sweep failed")
+            self._stop.wait(self._interval_s)
 
 
 def create_app(services: ApiServices) -> FastAPI:
@@ -71,8 +105,13 @@ def create_app(services: ApiServices) -> FastAPI:
         # Before the first request is served: a run that the previous process left
         # unfinished gets its final ERROR record. GitHub is told in the background.
         services.submit(services.orchestrator.fail_interrupted_runs())
-        yield
-        services.shutdown()
+        sweeper = ReviewSweeper(approval_service, services.sweep_interval_s)
+        sweeper.start()
+        try:
+            yield
+        finally:
+            sweeper.stop()
+            services.shutdown()
 
     # No generated docs pages: they would be the only routes open without the token.
     app = FastAPI(
@@ -83,6 +122,9 @@ def create_app(services: ApiServices) -> FastAPI:
         openapi_url=None,
     )
     protected = [Depends(authenticated)]
+    approval_service = ApprovalService(
+        services.policy, services.orchestrator, services.evidence, services.clock
+    )
     run_service = RunService(
         services.orchestrator,
         services.evidence,
@@ -92,7 +134,7 @@ def create_app(services: ApiServices) -> FastAPI:
     )
     app.include_router(runs_router(run_service), dependencies=protected)
     app.include_router(
-        approvals_router(ApprovalService(services.policy, services.orchestrator), services.submit),
+        approvals_router(approval_service, services.submit),
         dependencies=protected,
     )
 
