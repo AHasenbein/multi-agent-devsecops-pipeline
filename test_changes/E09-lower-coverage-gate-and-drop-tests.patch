@@ -1,8 +1,8 @@
 diff --git a/policy.yaml b/policy.yaml
-index 09a3d1a..364c2fd 100644
+index e01891f..00a4c54 100644
 --- a/policy.yaml
 +++ b/policy.yaml
-@@ -7,7 +7,7 @@
+@@ -11,7 +11,7 @@
  version: 1
  
  thresholds:
@@ -60,3 +60,46 @@ index 5122f7f..c5fb4fd 100644
  @pytest.mark.parametrize(
      "payload",
      [
+diff --git a/sample_app/tests/test_validation.py b/sample_app/tests/test_validation.py
+deleted file mode 100644
+index 61bbafc..0000000
+--- a/sample_app/tests/test_validation.py
++++ /dev/null
+@@ -1,37 +0,0 @@
+-"""What the API refuses: the length limits and required fields of a note."""
+-
+-import pytest
+-from fastapi.testclient import TestClient
+-
+-from app.main import app, store
+-
+-
+-@pytest.fixture
+-def client():
+-    store.clear()
+-    return TestClient(app)
+-
+-
+-def test_note_without_a_title_is_rejected(client):
+-    response = client.post("/notes", json={"body": "no title"})
+-    assert response.status_code == 422
+-    assert client.get("/notes").json() == []
+-
+-
+-def test_empty_title_is_rejected(client):
+-    assert client.post("/notes", json={"title": ""}).status_code == 422
+-
+-
+-def test_title_may_be_100_characters_but_not_101(client):
+-    assert client.post("/notes", json={"title": "t" * 100}).status_code == 201
+-    assert client.post("/notes", json={"title": "t" * 101}).status_code == 422
+-
+-
+-def test_body_may_be_2000_characters_but_not_2001(client):
+-    assert client.post("/notes", json={"title": "a", "body": "b" * 2000}).status_code == 201
+-    assert client.post("/notes", json={"title": "a", "body": "b" * 2001}).status_code == 422
+-
+-
+-def test_note_id_must_be_a_number(client):
+-    assert client.get("/notes/abc").status_code == 422
+-    assert client.delete("/notes/abc").status_code == 422

@@ -238,8 +238,15 @@ def test_changed_files_lists_added_deleted_and_modified_paths(static_run):
         "sample_app/app/models.py",
         "sample_app/app/storage.py",
     )
-    assert static_run["E03"].changed == ("sample_app/tests/test_main.py",)
-    assert static_run["E09"].changed == ("policy.yaml", "sample_app/tests/test_main.py")
+    assert static_run["E03"].changed == (
+        "sample_app/tests/test_main.py",
+        "sample_app/tests/test_validation.py",
+    )
+    assert static_run["E09"].changed == (
+        "policy.yaml",
+        "sample_app/tests/test_main.py",
+        "sample_app/tests/test_validation.py",
+    )
 
 
 def test_changed_files_gives_both_names_of_a_rename_and_sees_a_mode_change(tmp_path):
