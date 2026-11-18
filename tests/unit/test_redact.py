@@ -49,6 +49,11 @@ def test_qa_pr_01_bearer_token_keeps_the_word_bearer():
         ("Possible hardcoded password: 'letmein99'", f"Possible hardcoded password: '{REDACTED}'"),
         ('{"token": "zzzz9999"}', f'{{"token": "{REDACTED}"}}'),
         ("SECRET_KEY=abcdefgh", f"SECRET_KEY={REDACTED}"),
+        (
+            "token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl",
+            f"token={REDACTED}",
+        ),
+        ("password=hunter22.", f"password={REDACTED}"),  # the full stop goes too
     ],
 )
 def test_qa_pr_01_secret_assignment_keeps_the_name(text, expected):
@@ -72,6 +77,9 @@ def test_qa_pr_01_private_key_cut_off_before_its_end_is_still_redacted():
         "token budget exceeded",
         'return {"token": share_token(note_id)}',
         "password = get_password()",
+        'TOKEN = os.environ.get("CONTROL_API_TOKEN", "")',
+        'token = os.environ["GITHUB_TOKEN"]',
+        "api_key = settings.api_key",
     ],
 )
 def test_normal_text_is_left_alone(text):

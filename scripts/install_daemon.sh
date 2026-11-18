@@ -88,7 +88,8 @@ done
 echo "GET /health: ${code}"
 echo "GET /runs without token: $(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/runs")"
 echo "listening: $(ss -ltn | awk -v p=":${PORT}" '$4 ~ p {print $4}')"
-echo "pin: $(git -C "${CHECKOUT}" log -1 --format='%h %s')"
+# As the checkout's owner: git refuses to read another user's repository as root.
+echo "pin: $(runuser -u "${APP_USER}" -- git -C "${CHECKOUT}" log -1 --format='%h %s')"
 systemctl is-active "${SERVICE}"
 [ "${code}" = "200" ] || { echo "--- log tail"; tail -20 "${LOG}"; exit 1; }
 echo DAEMON_SERVICE_OK

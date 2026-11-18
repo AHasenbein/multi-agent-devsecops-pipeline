@@ -42,8 +42,10 @@ SECRET_PATTERNS: tuple[SecretPattern, ...] = (
             r"""\b(?:[A-Za-z0-9_]*_)?(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key)"""
             r"""(?:_[A-Za-z0-9]+)?["']?\s*[:=]\s*["']?"""
             # The value: 4+ characters with at least one letter (not a bare number), not an
-            # earlier [REDACTED] (so redacting twice changes nothing), and not a call such
-            # as share_token(note_id), which is code rather than a secret.
+            # earlier [REDACTED] (so redacting twice changes nothing), and not code: a call
+            # such as share_token(note_id), or a dotted name such as os.environ or
+            # settings.api_key (short parts, so a JWT's long parts still count).
+            r"""(?![A-Za-z_]\w{0,24}(?:\.[A-Za-z_]\w{0,24})+(?![\w-]))"""
             r"""((?=[^\s"',;)}\]]*[A-Za-z])[^\s"',;(){}\]\[][^\s"',;(){}\]]{3,}(?![(\w]))""",
             re.IGNORECASE,
         ),
