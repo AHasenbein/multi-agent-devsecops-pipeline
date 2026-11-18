@@ -4,8 +4,9 @@ A long-running daemon on the team host, not something a workflow job starts:
 
     uvicorn devsecops.api.main:create_app_from_env --factory --host 127.0.0.1 --port 8000
 
-It needs CONTROL_API_TOKEN, GITHUB_TOKEN and DEVSECOPS_APP_REPO in its environment. Every
-route except GET /health asks for ``Authorization: Bearer <CONTROL_API_TOKEN>``.
+It needs CONTROL_API_TOKEN, GITHUB_TOKEN and DEVSECOPS_APP_REPO in its environment, and
+OPENROUTER_API_KEY for Claude-written reasons (without it, decisions keep the template
+reason). Every route except GET /health asks for ``Authorization: Bearer <CONTROL_API_TOKEN>``.
 
 When it starts, it closes the runs that the previous process left unfinished as ERROR
 (CLAUDE.md §11 item 12). Runs paused for review are kept. While it runs, a background
@@ -162,6 +163,7 @@ def create_app_from_env() -> FastAPI:
         TestAgent,
     )
     from devsecops.config import load_settings
+    from devsecops.llm import reason_writer_from_env
     from devsecops.notifications.github_notifier import GitHubNotifier
     from devsecops.orchestrator.graph import PipelineDeps
     from devsecops.orchestrator.locks import DeployLock
@@ -203,8 +205,9 @@ def create_app_from_env() -> FastAPI:
             InjectionDetector(),
             app_dir=settings.app_dir,
         ),
-        # No reason writer yet: Claude is Phase 7. Decisions carry the template reason.
-        policy_agent=PolicyAgent(RuleEngine(policy)),
+        # Claude writes the reason when OPENROUTER_API_KEY is set; otherwise the template
+        # reason stays. Either way the rules alone decide (invariant 1).
+        policy_agent=PolicyAgent(RuleEngine(policy), reason_writer_from_env(policy)),
         deployment_agent=DeploymentAgent(sandbox),
         monitoring_agent=MonitoringAgent(sandbox, HealthChecker(timeout_s=2), policy.timers),
         setup_check=SetupValidator(docker, settings.policy_path).problems,

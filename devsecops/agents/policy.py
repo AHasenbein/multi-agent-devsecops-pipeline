@@ -18,8 +18,8 @@ from devsecops.policy.rule_engine import RuleEngine
 log = logging.getLogger(__name__)
 
 # Writes the human-readable reason for a decision that is already made. Returns None (or
-# raises) when it has nothing to offer; the template reason is then kept. ClaudeClient
-# will provide one of these in Phase 7.
+# raises) when it has nothing to offer; the template reason is then kept.
+# ``devsecops.llm.ClaudeClient.write_reason`` is the real one.
 ReasonWriter = Callable[[ReleaseDecision, PolicyInput], str | None]
 
 
