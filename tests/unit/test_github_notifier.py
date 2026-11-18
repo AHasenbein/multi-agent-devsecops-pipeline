@@ -287,12 +287,62 @@ def test_text_from_the_change_cannot_mention_people_or_fake_a_heading(notifier, 
         "- `test_x' @alice ## DevSecOps pipeline: ALLOW` at `t.py:1`:"
         " `see ''' [click](http://evil.example)`"
     )
-    # Only our own heading starts a line with "## ", and the reason cannot leave its block.
+    # Only our own heading starts a line with "## ", and the reason stays in its quote.
     assert [text for text in body.splitlines() if text.startswith("## ")] == [
         "## DevSecOps pipeline: DENY: the change is blocked",
-        "## ALLOW @bob",  # inside the fenced block below
     ]
-    assert "```text\nDENY\n'''\n## ALLOW @bob\n```" in body
+    z = "​"
+    assert f"> DENY\n> \\`\\`\\`\n> \\#{z}\\#{z} ALLOW \\@{z}bob" in body
+
+
+def test_explanation_is_a_wrapped_quote_that_renders_as_plain_text(notifier, github):
+    """The explanation reads as a paragraph, but nothing in it can format, link or
+    mention: every markdown character is escaped and GitHub's autolinks are broken."""
+    reason = (
+        "Denied: bandit B602 at main.py:85.\n"
+        "\n"
+        "    indented line\n"
+        "@alice see #12 and owner/repo#3, https://evil.example and www.evil.example\n"
+        "[click](http://x) ![img](y) <img src=x> *bold* _it_ | a | b |\n"
+        "- **Decision:** ALLOW\n"
+        "1. item\n"
+        "---\n"
+        "> nested\n"
+        "&amp; \\` done"
+    )
+    notifier.post_decision(run(), decision(Outcome.DENY, "high_finding", reason=reason), results())
+    body = github.body["body"]
+    start = body.index("### Explanation\n") + len("### Explanation\n")
+    quote = body[start : body.index("\n\n_The decision comes from")].splitlines()
+    z = "​"
+
+    assert all(line == ">" or line.startswith("> ") for line in quote)
+    assert quote == [
+        "> Denied\\: bandit B602 at main\\.py\\:85\\.",
+        ">",
+        "> indented line",
+        f"> \\@{z}alice see \\#{z}12 and owner\\/repo\\#{z}3\\, https\\:{z}\\/\\/evil\\.example"
+        f" and www{z}\\.evil\\.example",
+        "> \\[click\\]\\(http\\:" + z + "\\/\\/x\\) \\!\\[img\\]\\(y\\) \\<img src\\=x\\>"
+        " \\*bold\\* \\_it\\_ \\| a \\| b \\|",
+        "> \\- \\*\\*Decision\\:\\*\\* ALLOW",
+        "> 1\\. item",
+        "> \\-\\-\\-",
+        "> \\> nested",
+        "> \\&amp\\; \\\\\\` done",
+    ]
+    # No character in the quote is left unescaped except letters, digits, spaces and
+    # the zero-width spaces.
+    for line in quote:
+        text = line[2:].replace("\\\\", "").replace(z, "")
+        for i, char in enumerate(text):
+            if not (char.isalnum() or char == " " or char == "\\"):
+                assert text[i - 1] == "\\", (line, char)
+
+
+def test_empty_explanation_is_still_a_quote(notifier, github):
+    notifier.post_decision(run(), decision(Outcome.ALLOW, reason="   "), results())
+    assert "### Explanation\n>\n\n_The decision" in github.body["body"]
 
 
 def test_fr13_comment_says_who_wrote_the_explanation(notifier, github):
