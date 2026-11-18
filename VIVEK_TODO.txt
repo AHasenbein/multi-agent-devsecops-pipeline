@@ -20,7 +20,7 @@ the code should be merged before that week.
   2. Claude reason writer + redaction  PR by Sun 11/22
   3. Secrets check script (QA-PR-01)   PR by Mon 11/23
   4. Report section: changes from the design, and known limits   by Fri 11/27
-  5. QA-US-01 user test with five classmates                     by Fri 11/27
+  5. QA-US-01 user test with five classmates        DROPPED 11/18 (CLAUDE.md §11 item 14)
 
 How to work
 -----------
@@ -286,7 +286,7 @@ Alex adds the numbers (timings, 30-change results) after Phase 8.
 
 
 =====================================================================
-TASK 5. QA-US-01 user test
+TASK 5. QA-US-01 user test  (DROPPED 11/18: not run, see CLAUDE.md §11 item 14)
 =====================================================================
 
 The requirement: 4 of 5 test users can name why a change was denied, from the
