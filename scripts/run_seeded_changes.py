@@ -90,6 +90,7 @@ class Decision:
 _HEAD = re.compile(r"^## DevSecOps pipeline: (ALLOW|DENY|ESCALATE)\b")
 _FIELD = re.compile(r"^- \*\*(Decision|Commit|Run):\*\* `?([^`\s]+)`?\s*$")
 _RULE = re.compile(r"^- `([^`]+)`")
+_FENCE = re.compile(r"^(`{3,}|~{3,})")
 _REVIEW_HEAD = "## DevSecOps pipeline: review needed"
 _ALERT = re.compile(r"^## DevSecOps pipeline alert: (.+)$")
 
@@ -101,17 +102,26 @@ def parse_decision(body: str) -> Decision | None:
         return None
     fields: dict[str, str] = {}
     rules: list[str] = []
-    in_rules = False
+    section = None  # None = the header, before the first "###" heading
+    fence = None  # the opening fence of the code block we are in, if any
     for line in lines[1:]:
+        if fence is not None:
+            if line.strip() == fence:
+                fence = None
+            continue  # code blocks hold untrusted text: never read from them
+        if match := _FENCE.match(line):
+            fence = match.group(1)
+            continue
         if line.startswith("### "):
-            in_rules = line == "### Rules that matched"
+            section = line
             continue
-        if in_rules:
-            if match := _RULE.match(line):
-                rules.append(match.group(1))
-            continue
-        if match := _FIELD.match(line):
-            fields[match.group(1)] = match.group(2)
+        if section is None:
+            # Only the header holds these fields. Text further down (the explanation)
+            # may come from the change or from Claude and must not be able to set them.
+            if (match := _FIELD.match(line)) and match.group(1) not in fields:
+                fields[match.group(1)] = match.group(2)
+        elif section == "### Rules that matched" and (match := _RULE.match(line)):
+            rules.append(match.group(1))
     if not {"Decision", "Commit", "Run"} <= fields.keys():
         return None
     source = "claude" if "written by Claude" in body else "template"
@@ -426,8 +436,9 @@ def summarize(results: list[LiveResult]) -> Summary:
     if by["medium_risk"]:
         checks.append(
             (
-                f"medium_risk {len(escalated_medium)}/{len(by['medium_risk'])} ESCALATE",
-                True,  # informational: the criterion is "never ALLOW", checked below
+                f"medium_risk {len(escalated_medium)}/{len(by['medium_risk'])} ESCALATE"
+                " (all must be)",
+                len(escalated_medium) == len(by["medium_risk"]),
             )
         )
     if by["safe"]:

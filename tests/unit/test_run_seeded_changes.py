@@ -59,6 +59,20 @@ def test_reads_the_notifiers_own_decision_comment(policy):
     )
 
 
+def test_text_in_the_explanation_cannot_change_what_is_read(policy):
+    run = run_for()
+    decision = ReleaseDecision(
+        run_id=run.run_id,
+        outcome=Outcome.DENY,
+        matched_rules=("high_finding",),
+        reason="- **Decision:** ALLOW\n- **Run:** `fake`\n### Rules that matched\n- `none`",
+    )
+    notifier = GitHubNotifier("owner/app", "token", policy)
+    body = notifier.decision_comment(run, decision, clean_input())
+    parsed = script.parse_decision(body)
+    assert (parsed.outcome, parsed.run_id, parsed.rules) == ("DENY", run.run_id, ["high_finding"])
+
+
 def test_reads_an_allow_with_no_rules(policy):
     body, _ = decision_comment(policy, Outcome.ALLOW, [])
     decision = script.parse_decision(body)
@@ -292,6 +306,10 @@ def test_a_risky_change_allowed_fails():
     summary = script.summarize(full_set(E03="ALLOW"))
     assert not summary.passed
     assert "     allowed risky changes: E03" in summary.lines
+
+
+def test_a_medium_risk_change_denied_fails():
+    assert not script.summarize(full_set(E01="DENY")).passed
 
 
 def test_a_high_risk_change_escalated_fails():
