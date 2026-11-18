@@ -35,6 +35,26 @@ not, and 2 means the check could not run (for example, a patch no longer applies
 `uv run pytest tests/unit/test_seeded_changes.py` is the fast part. It validates the manifest
 and applies every patch, without running the tools.
 
+## Run them through the real pipeline (Phase 8)
+
+```bash
+uv run python scripts/run_seeded_changes.py --repo <owner>/<app-repo> --check-only   # push nothing
+uv run python scripts/run_seeded_changes.py --repo <owner>/<app-repo> --json phase8.json
+uv run python scripts/run_seeded_changes.py --repo <owner>/<app-repo> --only S01 D06 E01 E07 D01 --batch 5
+```
+
+For each change the script pushes a branch to the private app repo and opens a pull request
+to main. The pipeline on the team host then evaluates it. The script reads the decision from
+the pipeline's comment, answers REJECT for an escalated run through `approve.yml`, waits for
+the final commit status, and closes the pull request. Then it checks the pass criteria
+above and that every decision came within 10 minutes (QA-PE-01). `--batch 5` opens five pull
+requests at once (QA-SC-01). All 30 take about 1.5 hours, because every allowed change is
+deployed and monitored for 5 minutes.
+
+It runs the offline check against a fresh clone of the app repo first, so the two repos
+cannot drift apart unnoticed. It needs git and an authenticated `gh` with write access to
+the app repo, and runs on a laptop.
+
 ## What the offline check cannot confirm
 
 The manifest marks these changes with `verify_e2e`, and the script prints them with `ok*`.
