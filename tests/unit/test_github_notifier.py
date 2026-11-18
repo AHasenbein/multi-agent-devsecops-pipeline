@@ -187,6 +187,7 @@ def test_findings_are_listed_worst_first_and_cut_to_the_top_few(notifier, github
         finding("B602", Severity.HIGH),
         finding("B102", Severity.LOW),
         finding("B103", Severity.LOW),
+        finding("B104", Severity.LOW),
     ]
     notifier.post_decision(
         run(),
@@ -194,9 +195,64 @@ def test_findings_are_listed_worst_first_and_cut_to_the_top_few(notifier, github
         results(security=SecurityReport(findings=findings)),
     )
     body = github.body["body"]
-    assert "### Security findings (5)" in body
+    assert "### Security findings (6)" in body
     assert body.index("B602") < body.index("B301") < body.index("B101")
-    assert "B102" not in body and "- ... and 2 more" in body
+    # LOW findings are folded into a <details> block below the ones that matter.
+    assert body.index("B301") < body.index("<details>") < body.index("B101")
+    assert "<summary>4 LOW finding(s), which do not affect the decision</summary>" in body
+    assert "B104" not in body and "- ... and 1 more" in body
+
+
+def test_main_issue_and_explanation_come_before_the_details(notifier, github):
+    """Readers found the cause hard to spot under 30 LOW findings (feedback 11/18)."""
+    findings = [
+        Finding(tool="bandit", rule_id="B101", file="t.py", line=3, severity=Severity.LOW),
+        Finding(
+            tool="bandit",
+            rule_id="B602",
+            file="sample_app/app/main.py",
+            line=85,
+            severity=Severity.HIGH,
+            message="subprocess call with shell=True",
+        ),
+    ]
+    notifier.post_decision(
+        run(),
+        decision(Outcome.DENY, "high_finding"),
+        results(security=SecurityReport(findings=findings)),
+    )
+    body = github.body["body"]
+    assert body.splitlines()[2] == (
+        "**Main issue:** **HIGH** bandit `B602` at `sample_app/app/main.py:85`:"
+        " `subprocess call with shell=True`"
+    )
+    assert body.index("**Main issue:**") < body.index("- **Decision:** DENY")
+    assert body.index("### Explanation") < body.index("### Rules that matched")
+    assert body.index("### Explanation") < body.index("### Security findings")
+
+
+def test_main_issue_names_the_failed_test_and_counts_the_other_rules(notifier, github):
+    failure = TestFailure(test_name="test_create_note", file="tests/test_main.py", line=31)
+    notifier.post_decision(
+        run(),
+        decision(Outcome.DENY, "test_failed", "high_finding"),
+        results(test=TestReport(passed=1, failed=1, coverage_pct=90, failures=[failure])),
+    )
+    assert (
+        "**Main issue:** test `test_create_note` failed at `tests/test_main.py:31`"
+        " (and 1 more rule below)" in github.body["body"]
+    )
+
+
+def test_main_issue_falls_back_to_the_rule_description(notifier, github):
+    notifier.post_decision(run(), decision(Outcome.ESCALATE, "important_file_changed"), results())
+    assert "**Main issue:** " in github.body["body"]
+    assert "**Main issue:** `important_file_changed`" not in github.body["body"]
+
+
+def test_allow_comment_has_no_main_issue(notifier, github):
+    notifier.post_decision(run(), decision(Outcome.ALLOW), results())
+    assert "**Main issue:**" not in github.body["body"]
 
 
 def test_pip_audit_finding_shows_its_package(notifier, github):
