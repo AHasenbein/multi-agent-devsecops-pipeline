@@ -70,6 +70,8 @@ def test_qa_pr_01_private_key_cut_off_before_its_end_is_still_redacted():
         "requests 2.19.0 has GHSA-x84v-xcm2-53pg",
         "the password field is required",
         "token budget exceeded",
+        'return {"token": share_token(note_id)}',
+        "password = get_password()",
     ],
 )
 def test_normal_text_is_left_alone(text):

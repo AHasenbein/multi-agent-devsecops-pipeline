@@ -41,9 +41,10 @@ SECRET_PATTERNS: tuple[SecretPattern, ...] = (
             # NAME[_SUFFIX] = value, e.g. password=..., DB_PASSWORD=..., SECRET_KEY: ...
             r"""\b(?:[A-Za-z0-9_]*_)?(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key)"""
             r"""(?:_[A-Za-z0-9]+)?["']?\s*[:=]\s*["']?"""
-            # The value: 4+ characters with at least one letter (not a bare number), and not
-            # an earlier [REDACTED], so redacting twice changes nothing.
-            r"""((?=[^\s"',;)}\]]*[A-Za-z])[^\s"',;)}\]\[][^\s"',;)}\]]{3,})""",
+            # The value: 4+ characters with at least one letter (not a bare number), not an
+            # earlier [REDACTED] (so redacting twice changes nothing), and not a call such
+            # as share_token(note_id), which is code rather than a secret.
+            r"""((?=[^\s"',;)}\]]*[A-Za-z])[^\s"',;(){}\]\[][^\s"',;(){}\]]{3,}(?![(\w]))""",
             re.IGNORECASE,
         ),
         1,
