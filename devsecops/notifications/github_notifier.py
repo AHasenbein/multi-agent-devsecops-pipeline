@@ -1,9 +1,9 @@
 """Tells the developer and the reviewers what happened, on GitHub (FR3, FR5, FR14, FR18).
 
 A commit status shows the state of the run next to the commit. A comment (on the pull
-request, or on the commit for a push) shows the decision, the rules that matched, and the
-failed tests and findings with file and line, so the cause can be named from the comment
-alone (QA-US-01).
+request, or on the commit for a push) opens with the decision, a bold one-line main issue
+and the explanation, then lists the rules that matched and the failed tests and findings
+with file and line. LOW findings are folded away so they cannot bury the cause.
 
 Test names, messages and tool output come from the change being evaluated, so they are
 untrusted. They are only ever put inside code spans or code blocks, where they cannot
@@ -129,14 +129,30 @@ class GitHubNotifier:
     def decision_comment(
         self, run: PipelineRun, decision: ReleaseDecision, results: PolicyInput
     ) -> str:
-        """The decision first, then why, then where: the order a reader needs it in."""
+        """The decision and its main cause first, then the explanation, then the details.
+
+        scripts/run_seeded_changes.py reads the Decision/Commit/Run fields from the part
+        before the first "###" heading, so they stay there.
+        """
         descriptions = {rule.id: rule.description for rule in self._policy.rules}
-        lines = [
-            f"## DevSecOps pipeline: {_HEADLINE[decision.outcome]}",
-            "",
+        lines = [f"## DevSecOps pipeline: {_HEADLINE[decision.outcome]}", ""]
+        cause = self._main_cause(decision, results, descriptions)
+        if cause:
+            lines += [f"**Main issue:** {cause}", ""]
+        lines += [
             f"- **Decision:** {decision.outcome.value}",
             f"- **Commit:** `{run.commit_sha}`",
             f"- **Run:** `{run.run_id}`",
+        ]
+
+        writer = "Claude" if decision.reason_source == "claude" else "a fixed template"
+        lines += [
+            "",
+            "### Explanation",
+            _code_block(decision.reason, 3000),
+            "",
+            f"_The decision comes from the rules in `policy.yaml`. The explanation was written"
+            f" by {writer} and cannot change it._",
         ]
 
         lines += ["", "### Rules that matched"]
@@ -168,8 +184,23 @@ class GitHubNotifier:
             key=lambda f: _SEVERITY_ORDER[f.severity],
         )
         if findings:
+            # LOW findings never decide anything. Folded away, they cannot bury the
+            # HIGH or MEDIUM finding that does.
+            serious = [f for f in findings if f.severity is not Severity.LOW]
+            low = [f for f in findings if f.severity is Severity.LOW]
             lines += ["", f"### Security findings ({len(findings)})"]
-            lines += self._listed(findings, _finding_line)
+            lines += self._listed(serious, _finding_line)
+            if low:
+                lines += [
+                    "",
+                    "<details>",
+                    f"<summary>{len(low)} LOW finding(s), which do not affect the decision"
+                    "</summary>",
+                    "",
+                    *self._listed(low, _finding_line),
+                    "",
+                    "</details>",
+                ]
 
         notes = []
         if results.test is not None:
@@ -181,17 +212,52 @@ class GitHubNotifier:
             ]
         if notes:
             lines += ["", "### Other checks", *notes]
-
-        writer = "Claude" if decision.reason_source == "claude" else "a fixed template"
-        lines += [
-            "",
-            "### Explanation",
-            _code_block(decision.reason, 3000),
-            "",
-            f"_The decision comes from the rules in `policy.yaml`. The explanation was written"
-            f" by {writer} and cannot change it._",
-        ]
         return "\n".join(lines)
+
+    def _main_cause(
+        self, decision: ReleaseDecision, results: PolicyInput, descriptions: dict[str, str]
+    ) -> str | None:
+        """One line naming what decided the run: the first matched rule (deny rules come
+        first) and the first item that triggered it. Built from our own data, never from
+        the explanation, and untrusted values stay in code spans."""
+        if not decision.matched_rules:
+            return None
+        rule = decision.matched_rules[0]
+        cause = None
+        findings = sorted(
+            results.security.findings if results.security else [],
+            key=lambda f: _SEVERITY_ORDER[f.severity],
+        )
+        if rule == "build_failed" and results.build is not None:
+            cause = "the Docker build failed" + (
+                f": {_code(results.build.errors[0], 200)}" if results.build.errors else ""
+            )
+        elif rule == "test_failed" and results.test is not None:
+            failures = results.test.failures
+            if failures:
+                cause = (
+                    f"test {_code(failures[0].test_name)} failed at"
+                    f" {_code(_location(failures[0].file, failures[0].line))}"
+                )
+            else:
+                cause = f"{results.test.failed} test(s) failed"
+        elif rule in ("high_finding", "medium_finding"):
+            severity = Severity.HIGH if rule == "high_finding" else Severity.MEDIUM
+            top = next((f for f in findings if f.severity is severity), None)
+            if top is not None:
+                cause = _finding_line(top).removeprefix("- ")
+        elif rule == "low_coverage" and results.test is not None:
+            minimum = self._policy.thresholds.min_coverage_pct
+            cause = (
+                f"test coverage is {results.test.coverage_pct:g}%, below the minimum of"
+                f" {minimum:g}%"
+            )
+        if cause is None:
+            cause = descriptions.get(rule) or _code(rule)
+        others = len(decision.matched_rules) - 1
+        if others:
+            cause += f" (and {others} more rule{'s' if others > 1 else ''} below)"
+        return cause
 
     def _listed(self, items: list, line) -> list[str]:
         shown = [line(item) for item in items[: self._max_items]]
