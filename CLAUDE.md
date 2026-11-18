@@ -63,7 +63,7 @@ Developer ──push/PR──▶ GitHub (private app repo, Actions: pipeline.yml
   - The distro stays up through `instanceIdleTimeout=-1` in the server's `.wslconfig` and a logon task that starts it. Docker starts with it through systemd.
   - **The self-hosted runner is on that server too** (installed 11/15 by `scripts/install_runner.sh`). It sits in `/home/devsecops/actions-runner` inside the `devsecops` distro, runs as the `devsecops` user under a systemd service named `actions.runner.<owner>-<app-repo>.team-host`, and starts with the distro. It is registered to the private app repo only, under the name `team-host` with the labels `self-hosted, Linux, X64, devsecops-host`. `pipeline.yml` should use `runs-on: [self-hosted, devsecops-host]`.
   - **The host's settings and secrets are in `.env` in the host's checkout** (gitignored, mode 600): `DEVSECOPS_APP_REPO`, `CONTROL_API_TOKEN`, and later `OPENROUTER_API_KEY` (§10) and `GITHUB_TOKEN` for the notifier. `CONTROL_API_TOKEN` has the same value as the app repo's Actions secret of that name. The checkout is pinned by detaching it at a commit (`git checkout --detach <commit>`).
-- **The Control API is a long-running daemon on the host** (systemd/launchd or `uvicorn` in tmux). It is **not** started per Actions job. Escalated runs can stay paused for up to 24 h, so pipeline state must persist across process restarts. Use the LangGraph SQLite checkpointer plus an `approvals` table with a `deadline_at` column. A run that is in progress (not paused) when the daemon stops is not resumed: at its next start the daemon closes it as ERROR and alerts the developer (§11 item 12).
+- **The Control API is a long-running daemon on the host** (systemd/launchd or `uvicorn` in tmux). It is **not** started per Actions job. Escalated runs can stay paused for up to 24 h, so pipeline state must persist across process restarts. Use the LangGraph SQLite checkpointer. The review deadline is the `deadline_at` field of the run's `REVIEW_REQUESTED` evidence record; there is no separate `approvals` table, so there is no second copy to keep in step. A run that is in progress (not paused) when the daemon stops is not resumed: at its next start the daemon closes it as ERROR and alerts the developer (§11 item 12).
 - **The GitHub workflow is a thin trigger.** It calls `POST /runs` with the commit info, then polls `GET /runs/{id}` until a decision exists and exits non-zero on DENY. Deploy + monitoring (5 min) continue asynchronously after the decision is posted.
 - **There are two different FastAPI apps.** Keep them in separate directories with separate dependencies.
   - `devsecops/` — the pipeline's Control API (port e.g. 8000).
@@ -95,7 +95,7 @@ multi-agent-devsecops-pipeline/
 │   │   ├── graph.py              # StateGraph build + conditional edges
 │   │   ├── state.py              # PipelineState
 │   │   ├── orchestrator.py       # Orchestrator.start_run(commit), resume(run_id, verdict)
-│   │   ├── approval_service.py   # reviewer authorization (done); timeout sweeper (Phase 5)
+│   │   ├── approval_service.py   # reviewer authorization; timeout sweeper (expire_overdue)
 │   │   ├── setup_validator.py    # checks docker, secrets, policy.yaml
 │   │   └── locks.py              # deploy lock
 │   ├── agents/                   # FR4–FR18
@@ -223,7 +223,7 @@ START → setup_check ─(fail)→ finish_error
 - Use `StateGraph(PipelineState)` with conditional edges after `build` and `policy`.
 - Compile with a **SQLite checkpointer** (`langgraph-checkpoint-sqlite`) and `thread_id = run_id`, so a paused review survives a restart.
 - `human_review` uses LangGraph `interrupt()`. The approval endpoint resumes it with `Command(resume=verdict)`.
-- **Timeout sweeper:** a background task in the Control API runs every 30–60 s. It finds approvals with `deadline_at < now` and resumes those runs with `TIMEOUT`. Because it reads from the DB, it works after a restart (FR15).
+- **Timeout sweeper:** a background task in the Control API runs every 30–60 s. It finds runs whose last evidence record is `REVIEW_REQUESTED` with `deadline_at < now` and resumes them with `TIMEOUT` (reviewer `system`). It sweeps once at daemon start and then every `ApiServices.sweep_interval_s` (30 s). Because it reads from the evidence store, it works after a restart (FR15). A reviewer's answer that claims the run first wins.
 - **Which runs deploy:** pushes and pull request runs both (§11 item 2). The set is `PipelineDeps.deploy_events`; a run whose event is not in it is evaluated only and ends as `ALLOWED`, which is what `scripts/run_local.py --no-deploy` uses.
 - **Restart:** when the daemon starts, `Orchestrator.fail_interrupted_runs()` gives every run without a `RUN_FINISHED` record that is not paused for review an `AGENT_ERROR` and a final `RUN_FINISHED` (ERROR) record, then sets an error commit status and alerts the developer (§11 item 12).
 - Run each graph invocation in a background task or thread so that `POST /runs` returns immediately with a `run_id`.
@@ -386,5 +386,5 @@ All timers come from `policy.yaml` `timers` / `config.py` so tests can shorten t
 - Every new rule or agent behavior gets a unit test that names the FR it covers.
 - Never commit `.env`, API keys, or `evidence.db`. `CONTROL_API_TOKEN` is a GitHub secret in the private app repo. `OPENROUTER_API_KEY` lives only in the host's `.env`, because the Control API is what calls the model. GitHub provides `GITHUB_TOKEN` to each job by itself, and does not allow a secret with a name that starts with `GITHUB_`. This public repo holds no secrets.
 - Each change goes on a branch and is reviewed by the other teammate (process constraint from the Requirements doc).
-- Who does what (decided 11/16): A. Hasenbein does everything that touches the team host or the app repo (`pipeline.yml`, `approve.yml`, `install_daemon.sh`, moving the host's pin, the Phase 8 runs). V. Dadi does the timeout sweeper (Phase 5) and the Claude module (Phase 7), which need neither.
+- Who does what (decided 11/16): A. Hasenbein does everything that touches the team host or the app repo (`pipeline.yml`, `approve.yml`, `install_daemon.sh`, moving the host's pin, the Phase 8 runs). V. Dadi does the timeout sweeper (Phase 5) and the Claude module (Phase 7), which need neither. **Changed 11/18:** A. Hasenbein took over all of V. Dadi's tasks in `VIVEK_TODO.txt` as well.
 - Out of scope: production deploys, non-Python languages, container image scanning, Kubernetes, and real user data.

@@ -41,7 +41,7 @@ class Workspaces:
 
 
 class Api:
-    def __init__(self, tmp_path, submit=None):
+    def __init__(self, tmp_path, submit=None, **services):
         self.world = World()
         self.docker = FakeDocker()
         self.notifier = RecordingNotifier()
@@ -58,6 +58,7 @@ class Api:
                     token=TOKEN,
                     sandbox_probe=lambda: self.probe,
                     submit=submit or (lambda work: work()),
+                    **services,
                 )
             ),
             headers=AUTH,
