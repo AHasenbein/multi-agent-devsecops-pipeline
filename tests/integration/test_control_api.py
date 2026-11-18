@@ -428,6 +428,36 @@ def test_daemon_wiring_builds_from_the_environment(tmp_path, monkeypatch):
     assert (tmp_path / "state" / "evidence.db").exists()
 
 
+@pytest.mark.parametrize("key", ["", "sk-or-v1-" + "0" * 32])
+def test_fr13_daemon_policy_agent_gets_claude_only_with_the_openrouter_key(
+    tmp_path, monkeypatch, key
+):
+    import devsecops.agents
+    import devsecops.llm
+
+    monkeypatch.setenv("DEVSECOPS_APP_REPO", "someone/notes-app")
+    monkeypatch.setenv("DEVSECOPS_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("CONTROL_API_TOKEN", TOKEN)
+    monkeypatch.setenv("OPENROUTER_API_KEY", key)
+    agents = []
+    real_agent = devsecops.agents.PolicyAgent
+
+    def recording_agent(*args, **kwargs):
+        agents.append(real_agent(*args, **kwargs))
+        return agents[-1]
+
+    monkeypatch.setattr(devsecops.agents, "PolicyAgent", recording_agent)
+
+    create_app_from_env()
+
+    (agent,) = agents
+    writer = agent._reason_writer
+    if key:
+        assert isinstance(writer.__self__, devsecops.llm.ClaudeClient)
+    else:
+        assert writer is None  # template reasons only
+
+
 def test_daemon_needs_the_app_repo_and_the_token(tmp_path, monkeypatch):
     monkeypatch.setenv("DEVSECOPS_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.delenv("DEVSECOPS_APP_REPO", raising=False)
